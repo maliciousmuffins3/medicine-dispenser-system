@@ -9,48 +9,54 @@ import {
   Container,
   Card,
   CardContent,
-  Alert, // For error messages
+  Alert,
 } from "@mui/material";
 import { Visibility, VisibilityOff } from "@mui/icons-material";
 import GoogleIcon from "@mui/icons-material/Google";
 import useAuth from "../hooks/useAuth";
-import { useNavigate } from "react-router-dom"; // For redirecting after login
+import { useNavigate } from "react-router-dom";
 
-const Login = () => {
-  const { login, loginWithGoogle } = useAuth();
-  const navigate = useNavigate(); // Hook to navigate between routes
+const SignUp = () => {
+  const { signUp, loginWithGoogle } = useAuth();
+  const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState(""); // To handle login error messages
+  const [error, setError] = useState("");
 
   const handleTogglePassword = () => {
     setShowPassword(!showPassword);
   };
 
-  const handleLogin = async (e) => {
+  const handleSignUp = async (e) => {
     e.preventDefault();
-    setError(""); // Clear previous errors
+    setError("");
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
 
     try {
-      await login(email, password);
-      console.log("User logged in successfully!");
-      navigate("/home"); // Redirect to homepage after successful login
+      await signUp(email, password);
+      console.log("User signed up successfully!");
+      navigate("/home"); // Redirect after successful sign-up
     } catch (err) {
-      console.log("Login Error:", err.message);
-      setError("Invalid email or password. Please try again.");
+      console.log("Sign Up Error:", err.message);
+      setError("Failed to create an account. Please try again.");
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setError(""); // Clear previous errors
+  const handleGoogleSignUp = async () => {
+    setError("");
     try {
       await loginWithGoogle();
-      navigate("/home"); // Redirect to homepage after successful login
+      navigate("/home"); // Redirect after Google sign-up
     } catch (error) {
-      console.log("Google Login Error:", error.message);
-      setError("Google sign-in failed. Please try again.");
+      console.log("Google Sign-Up Error:", error.message);
+      setError("Google sign-up failed. Please try again.");
     }
   };
 
@@ -59,10 +65,9 @@ const Login = () => {
       <Card sx={{ mt: 8, p: 3, textAlign: "center", boxShadow: 3 }}>
         <CardContent>
           <Typography variant="h5" fontWeight="bold" color="green" mb={2}>
-            Sign In
+            Sign Up
           </Typography>
 
-          {/* Displaying error message */}
           {error && <Alert severity="error">{error}</Alert>}
 
           <TextField
@@ -93,25 +98,33 @@ const Login = () => {
             }}
           />
 
-          <Box textAlign="right">
-            <Typography
-              variant="body2"
-              color="primary"
-              sx={{ cursor: "pointer" }}
-              onClick={() => navigate("/reset-password")} // Redirect to forgot password page
-            >
-              Forgot Password?
-            </Typography>
-          </Box>
+          <TextField
+            fullWidth
+            label="Confirm Password"
+            variant="outlined"
+            margin="normal"
+            type={showPassword ? "text" : "password"}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={handleTogglePassword} edge="end">
+                    {showPassword ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
 
           <Button
             fullWidth
             variant="contained"
             color="success"
             sx={{ mt: 2, mb: 2 }}
-            onClick={handleLogin}
+            onClick={handleSignUp}
           >
-            Sign In
+            Sign Up
           </Button>
 
           <Button
@@ -119,18 +132,18 @@ const Login = () => {
             variant="outlined"
             startIcon={<GoogleIcon />}
             sx={{ mb: 2 }}
-            onClick={handleGoogleLogin}
+            onClick={handleGoogleSignUp}
           >
-            Sign in with Google
+            Sign up with Google
           </Button>
 
           <Typography variant="body2">
-            Don't have an account?{" "}
+            Already have an account?{" "}
             <span
               style={{ color: "green", cursor: "pointer" }}
-              onClick={() => navigate("/sign-up")} // Redirect to sign-up page
+              onClick={() => navigate("/login")}
             >
-              Create one
+              Sign In
             </span>
           </Typography>
         </CardContent>
@@ -139,4 +152,4 @@ const Login = () => {
   );
 };
 
-export default Login;
+export default SignUp;

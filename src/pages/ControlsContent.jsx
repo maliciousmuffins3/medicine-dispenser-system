@@ -36,13 +36,14 @@ const ControlsContent = ({ uid = '' }) => {
     medicinesData = [],  // Defaulting to empty array
     schedulesData = [],  // Defaulting to empty array
     addMedicine,
-    updateMedicine,
+    editMedicine,
     deleteMedicine,
     addSchedule,
-    updateSchedule,
+    editSchedule,
     deleteSchedule,
   } = useMedicine('medicines', 'schedules');
-
+  
+  
   const [isLocked, setIsLocked] = useState(false);
   const [openScheduleDialog, setOpenScheduleDialog] = useState(false);
   const [openMedicineDialog, setOpenMedicineDialog] = useState(false);
@@ -63,7 +64,7 @@ const ControlsContent = ({ uid = '' }) => {
 
   const handleAddSchedule = () => {
     if (newSchedule.medicine && newSchedule.dose && newSchedule.time) {
-      addSchedule(newSchedule);
+      addSchedule({...newSchedule,uid});
       setNewSchedule({ medicine: "", dose: "", time: "" });
       setOpenScheduleDialog(false);
     }
@@ -75,23 +76,27 @@ const ControlsContent = ({ uid = '' }) => {
         alert(`You can only add up to ${MAX_MEDICINES} medicines.`);
         return;
       }
-      addMedicine(newMedicine);
-      setNewMedicine({ name: "", dose: "" });
+
+      addMedicine({...newMedicine,uid});
+      setNewMedicine({ name: "", dose: ""});
       setOpenMedicineDialog(false);
     }
   };
 
   const handleEditSchedule = () => {
+    console.log("Editing schedule:", editScheduleData);  // Debugging
+  
     if (editScheduleData.medicine && editScheduleData.dose && editScheduleData.time) {
-      updateSchedule(editScheduleData.id, editScheduleData);
+      editSchedule(editScheduleData.id, editScheduleData);
       setOpenEditScheduleDialog(false);
       setEditScheduleData({ id: "", medicine: "", dose: "", time: "" });
     }
   };
+  
 
   const handleEditMedicine = () => {
     if (editMedicineData.name && editMedicineData.dose) {
-      updateMedicine(editMedicineData.id, editMedicineData);
+      editMedicine(editMedicineData);
       setOpenEditMedicineDialog(false);
       setEditMedicineData({ id: "", name: "", dose: "" });
     }

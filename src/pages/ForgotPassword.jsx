@@ -1,76 +1,83 @@
-// import React, { useState } from "react";
-// import {
-//   TextField,
-//   Button,
-//   Container,
-//   Typography,
-//   Box,
-//   Paper,
-//   Link
-// } from "@mui/material";
-// import { useForm } from "react-hook-form";
-// import { yupResolver } from "@hookform/resolvers/yup";
-// import * as yup from "yup";
-// import { resetPassword } from "../firebaseConfig"; // Firebase function
-// import { useNavigate } from "react-router-dom";
+import React, { useState } from "react";
+import {
+  TextField,
+  Button,
+  Typography,
+  Box,
+  Container,
+  Card,
+  CardContent,
+  Alert,
+} from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import useAuth from "../hooks/useAuth"; // Import authentication hook
 
-// // Validation Schema
-// const schema = yup.object().shape({
-//   email: yup.string().email("Invalid email").required("Email is required"),
-// });
+const ForgotPassword = () => {
+  const { resetPassword } = useAuth(); // Function to handle password reset
+  const navigate = useNavigate();
 
-// const ForgotPassword = () => {
-//   const [message, setMessage] = useState("");
-//   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
-//   const {
-//     register,
-//     handleSubmit,
-//     formState: { errors },
-//   } = useForm({ resolver: yupResolver(schema) });
+  const handleReset = async (e) => {
+    e.preventDefault();
+    setError("");
+    setMessage("");
+    
+    try {
+      await resetPassword(email);
+      setMessage("Password reset link sent! Check your email.");
+    } catch (err) {
+      console.log("Reset Password Error:", err.message);
+      setError("Failed to send password reset email. Try again.");
+    }
+  };
 
-//   const handlePasswordReset = async (data) => {
-//     try {
-//       await resetPassword(data.email);
-//       setMessage("Password reset email sent! Check your inbox.");
-//     } catch (error) {
-//       setMessage(error.message);
-//     }
-//   };
+  return (
+    <Container maxWidth="xs">
+      <Card sx={{ mt: 8, p: 3, textAlign: "center", boxShadow: 3 }}>
+        <CardContent>
+          <Typography variant="h5" fontWeight="bold" color="green" mb={2}>
+            Forgot Password
+          </Typography>
 
-//   return (
-//     <Container component="main" maxWidth="xs">
-//       <Paper elevation={6} sx={{ p: 4, mt: 6, borderRadius: 3, textAlign: "center" }}>
-//         <Typography variant="h4" sx={{ fontWeight: 600, mb: 2 }}>Forgot Password</Typography>
+          {/* Display success or error messages */}
+          {message && <Alert severity="success">{message}</Alert>}
+          {error && <Alert severity="error">{error}</Alert>}
 
-//         {message && <Typography color="green">{message}</Typography>}
+          <TextField
+            fullWidth
+            label="Enter your email"
+            variant="outlined"
+            margin="normal"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
 
-//         <Box component="form" onSubmit={handleSubmit(handlePasswordReset)} sx={{ width: "100%" }}>
-//           <TextField
-//             fullWidth
-//             label="Email Address"
-//             margin="normal"
-//             {...register("email")}
-//             error={!!errors.email}
-//             helperText={errors.email?.message}
-//           />
+          <Button
+            fullWidth
+            variant="contained"
+            color="success"
+            sx={{ mt: 2, mb: 2 }}
+            onClick={handleReset}
+          >
+            Reset Password
+          </Button>
 
-//           <Button type="submit" fullWidth variant="contained" color="primary" sx={{ mt: 2 }}>
-//             Reset Password
-//           </Button>
+          <Typography variant="body2">
+            Remembered your password? {" "}
+            <span
+              style={{ color: "green", cursor: "pointer" }}
+              onClick={() => navigate("/login")}
+            >
+              Sign In
+            </span>
+          </Typography>
+        </CardContent>
+      </Card>
+    </Container>
+  );
+};
 
-//           <Box sx={{ mt: 3 }}>
-//             <Typography variant="body2">
-//               Remembered your password?{" "}
-//               <Link component="button" onClick={() => navigate("/")} sx={{ color: "#4285F4" }}>
-//                 Sign In
-//               </Link>
-//             </Typography>
-//           </Box>
-//         </Box>
-//       </Paper>
-//     </Container>
-//   );
-// };
-
-// export default ForgotPassword;
+export default ForgotPassword;

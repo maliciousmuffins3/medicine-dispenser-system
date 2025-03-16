@@ -21,7 +21,7 @@ import DevicesIcon from "@mui/icons-material/Devices";
 import LogoutIcon from "@mui/icons-material/Logout";
 import useAuth from "../hooks/useAuth";
 
-const SettingsContent = () => {
+const SettingsContent = ({displayName = 'guest ',email = 'example@gmail.com' }) => {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [deviceConnected, setDeviceConnected] = useState(true);
@@ -29,8 +29,8 @@ const SettingsContent = () => {
 
   // Simulated User Data
   const user = {
-    name: "John Doe",
-    email: "johndoe@example.com",
+    name: displayName,
+    email: email,
     profilePic: "https://via.placeholder.com/100",
   };
 

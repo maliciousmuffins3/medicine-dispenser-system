@@ -6,7 +6,8 @@ import {
   createUserWithEmailAndPassword, 
   signOut, 
   GoogleAuthProvider, 
-  signInWithPopup 
+  signInWithPopup,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 
 const useAuth = () => {
@@ -42,7 +43,14 @@ const useAuth = () => {
     await signOut(auth);
   };
 
-  return { user, loading, signUp, login, loginWithGoogle, logout };
+  const resetPassword = async (email) => {
+    if (!email) throw new Error("Email is required");
+  
+    await sendPasswordResetEmail(auth, email);
+    console.log("Password reset email sent to:", email);
+  };
+
+  return { user, loading, signUp, login, loginWithGoogle, logout, resetPassword };
 };
 
 export default useAuth;
