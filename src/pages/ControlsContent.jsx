@@ -16,7 +16,6 @@ import {
   DialogActions,
   TextField,
   FormControlLabel,
-  Grid,
   Stack,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
@@ -25,31 +24,34 @@ import AddIcon from "@mui/icons-material/Add";
 import LockIcon from "@mui/icons-material/Lock";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
 import WarningIcon from "@mui/icons-material/Warning";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
 import MedicationIcon from "@mui/icons-material/Medication";
 import InventoryIcon from "@mui/icons-material/Inventory";
+import useMedicine from "../hooks/useMedicine";
 
-const initialSchedules = [
-  { id: 1, medicine: "Paracetamol", dose: "500mg", time: "08:00 AM" },
-  { id: 2, medicine: "Aspirin", dose: "250mg", time: "12:00 PM" },
-];
+const MAX_MEDICINES = 3;
 
-const initialMedicines = [
-  { id: 1, name: "Paracetamol", dose: "500mg" },
-  { id: 2, name: "Aspirin", dose: "250mg" },
-];
+const ControlsContent = ({ uid = '' }) => {
+  const {
+    medicinesData = [],  // Defaulting to empty array
+    schedulesData = [],  // Defaulting to empty array
+    addMedicine,
+    updateMedicine,
+    deleteMedicine,
+    addSchedule,
+    updateSchedule,
+    deleteSchedule,
+  } = useMedicine('medicines', 'schedules');
 
-const ControlsContent = () => {
   const [isLocked, setIsLocked] = useState(false);
-  const [schedules, setSchedules] = useState(initialSchedules);
-  const [medicines, setMedicines] = useState(initialMedicines);
   const [openScheduleDialog, setOpenScheduleDialog] = useState(false);
-  const [openMedicineDialog, setOpenMedicineDialog] = useState(false); // New state for medicine dialog
+  const [openMedicineDialog, setOpenMedicineDialog] = useState(false);
+  const [openEditScheduleDialog, setOpenEditScheduleDialog] = useState(false);
+  const [openEditMedicineDialog, setOpenEditMedicineDialog] = useState(false);
   const [newSchedule, setNewSchedule] = useState({ medicine: "", dose: "", time: "" });
-  const [newMedicine, setNewMedicine] = useState({ name: "", dose: "" }); // New state for new medicine details
-  const [lowStockAlert, setLowStockAlert] = useState(true);
-  const [notifyCaregiver, setNotifyCaregiver] = useState(true);
+  const [newMedicine, setNewMedicine] = useState({ name: "", dose: "" });
+  const [editScheduleData, setEditScheduleData] = useState({ id: "", medicine: "", dose: "", time: "" });
+  const [editMedicineData, setEditMedicineData] = useState({ id: "", name: "", dose: "" });
 
   const handleLockToggle = () => {
     setIsLocked((prev) => !prev);
@@ -61,7 +63,7 @@ const ControlsContent = () => {
 
   const handleAddSchedule = () => {
     if (newSchedule.medicine && newSchedule.dose && newSchedule.time) {
-      setSchedules([...schedules, { id: Date.now(), ...newSchedule }]);
+      addSchedule(newSchedule);
       setNewSchedule({ medicine: "", dose: "", time: "" });
       setOpenScheduleDialog(false);
     }
@@ -69,18 +71,38 @@ const ControlsContent = () => {
 
   const handleAddMedicine = () => {
     if (newMedicine.name && newMedicine.dose) {
-      setMedicines([...medicines, { id: Date.now(), ...newMedicine }]);
+      if (medicinesData.length >= MAX_MEDICINES) {
+        alert(`You can only add up to ${MAX_MEDICINES} medicines.`);
+        return;
+      }
+      addMedicine(newMedicine);
       setNewMedicine({ name: "", dose: "" });
       setOpenMedicineDialog(false);
     }
   };
 
+  const handleEditSchedule = () => {
+    if (editScheduleData.medicine && editScheduleData.dose && editScheduleData.time) {
+      updateSchedule(editScheduleData.id, editScheduleData);
+      setOpenEditScheduleDialog(false);
+      setEditScheduleData({ id: "", medicine: "", dose: "", time: "" });
+    }
+  };
+
+  const handleEditMedicine = () => {
+    if (editMedicineData.name && editMedicineData.dose) {
+      updateMedicine(editMedicineData.id, editMedicineData);
+      setOpenEditMedicineDialog(false);
+      setEditMedicineData({ id: "", name: "", dose: "" });
+    }
+  };
+
   const handleDeleteSchedule = (id) => {
-    setSchedules(schedules.filter((schedule) => schedule.id !== id));
+    deleteSchedule(id);
   };
 
   const handleDeleteMedicine = (id) => {
-    setMedicines(medicines.filter((medicine) => medicine.id !== id));
+    deleteMedicine(id);
   };
 
   return (
@@ -109,13 +131,21 @@ const ControlsContent = () => {
               <InventoryIcon sx={{ mr: 1 }} /> Medicine Schedule
             </Typography>
             <List>
-              {schedules.map((schedule) => (
+              {schedulesData.map((schedule) => (
                 <ListItem
                   key={schedule.id}
                   secondaryAction={
-                    <IconButton color="error" onClick={() => handleDeleteSchedule(schedule.id)}>
-                      <DeleteIcon />
-                    </IconButton>
+                    <>
+                      <IconButton color="primary" onClick={() => {
+                        setEditScheduleData(schedule);
+                        setOpenEditScheduleDialog(true);
+                      }}>
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton color="error" onClick={() => handleDeleteSchedule(schedule.id)}>
+                        <DeleteIcon />
+                      </IconButton>
+                    </>
                   }
                 >
                   <ListItemText primary={`${schedule.medicine} - ${schedule.dose} at ${schedule.time}`} />
@@ -135,20 +165,33 @@ const ControlsContent = () => {
               <InventoryIcon sx={{ mr: 1 }} /> Medicines
             </Typography>
             <List>
-              {medicines.map((medicine) => (
+              {medicinesData.map((medicine) => (
                 <ListItem
                   key={medicine.id}
                   secondaryAction={
-                    <IconButton color="error" onClick={() => handleDeleteMedicine(medicine.id)}>
-                      <DeleteIcon />
-                    </IconButton>
+                    <>
+                      <IconButton color="primary" onClick={() => {
+                        setEditMedicineData(medicine);
+                        setOpenEditMedicineDialog(true);
+                      }}>
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton color="error" onClick={() => handleDeleteMedicine(medicine.id)}>
+                        <DeleteIcon />
+                      </IconButton>
+                    </>
                   }
                 >
                   <ListItemText primary={`${medicine.name} - ${medicine.dose}`} />
                 </ListItem>
               ))}
             </List>
-            <Button startIcon={<AddIcon />} variant="outlined" onClick={() => setOpenMedicineDialog(true)}>
+            <Button
+              startIcon={<AddIcon />}
+              variant="outlined"
+              onClick={() => setOpenMedicineDialog(true)}
+              disabled={medicinesData.length >= MAX_MEDICINES}
+            >
               Add Medicine
             </Button>
           </CardContent>
@@ -173,15 +216,9 @@ const ControlsContent = () => {
             <Typography variant="h6">
               <InventoryIcon sx={{ mr: 1 }} /> Refill & Inventory
             </Typography>
-            {lowStockAlert ? (
-              <Typography color="error">
-                <WarningIcon sx={{ verticalAlign: "middle", mr: 1 }} /> Paracetamol is running low! Only 5 tablets left.
-              </Typography>
-            ) : (
-              <Typography color="success">
-                <CheckCircleIcon sx={{ verticalAlign: "middle", mr: 1 }} /> All medicines are well-stocked.
-              </Typography>
-            )}
+            <Typography color="error">
+              <WarningIcon sx={{ verticalAlign: "middle", mr: 1 }} /> Paracetamol is running low! Only 5 tablets left.
+            </Typography>
           </CardContent>
         </Card>
 
@@ -192,7 +229,7 @@ const ControlsContent = () => {
               <NotificationsActiveIcon sx={{ mr: 1 }} /> Notifications & Alerts
             </Typography>
             <FormControlLabel
-              control={<Switch checked={notifyCaregiver} onChange={() => setNotifyCaregiver(!notifyCaregiver)} />}
+              control={<Switch checked={true} />}
               label="Notify Caregiver When a Dose is Missed"
             />
           </CardContent>
@@ -235,6 +272,42 @@ const ControlsContent = () => {
         </DialogActions>
       </Dialog>
 
+      {/* Edit Schedule Dialog */}
+      <Dialog open={openEditScheduleDialog} onClose={() => setOpenEditScheduleDialog(false)}>
+        <DialogTitle>Edit Schedule</DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            label="Medicine Name"
+            value={editScheduleData.medicine}
+            onChange={(e) => setEditScheduleData({ ...editScheduleData, medicine: e.target.value })}
+            sx={{ mt: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Dose"
+            value={editScheduleData.dose}
+            onChange={(e) => setEditScheduleData({ ...editScheduleData, dose: e.target.value })}
+            sx={{ mt: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Time"
+            type="time"
+            value={editScheduleData.time}
+            onChange={(e) => setEditScheduleData({ ...editScheduleData, time: e.target.value })}
+            sx={{ mt: 2 }}
+            InputLabelProps={{ shrink: true }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenEditScheduleDialog(false)}>Cancel</Button>
+          <Button variant="contained" color="primary" onClick={handleEditSchedule}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Add Medicine Dialog */}
       <Dialog open={openMedicineDialog} onClose={() => setOpenMedicineDialog(false)}>
         <DialogTitle>Add New Medicine</DialogTitle>
@@ -258,6 +331,33 @@ const ControlsContent = () => {
           <Button onClick={() => setOpenMedicineDialog(false)}>Cancel</Button>
           <Button variant="contained" color="primary" onClick={handleAddMedicine}>
             Add
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Medicine Dialog */}
+      <Dialog open={openEditMedicineDialog} onClose={() => setOpenEditMedicineDialog(false)}>
+        <DialogTitle>Edit Medicine</DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            label="Medicine Name"
+            value={editMedicineData.name}
+            onChange={(e) => setEditMedicineData({ ...editMedicineData, name: e.target.value })}
+            sx={{ mt: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Dose"
+            value={editMedicineData.dose}
+            onChange={(e) => setEditMedicineData({ ...editMedicineData, dose: e.target.value })}
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenEditMedicineDialog(false)}>Cancel</Button>
+          <Button variant="contained" color="primary" onClick={handleEditMedicine}>
+            Save
           </Button>
         </DialogActions>
       </Dialog>
