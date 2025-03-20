@@ -243,7 +243,7 @@ const ControlsContent = ({ db, app }) => {
                     await addDoc(historyCollectionRef, {
                         medicineName: medicine.name,
                         dose: medicine.dose,
-                        time: new Date(), // Store current time of scheduling
+                        timeAdded: new Date(), // Store current time of scheduling
                         scheduledTime: newSchedule.time, // Store scheduled time
                         taken: false, // Initial status
                         status: "Scheduled",
