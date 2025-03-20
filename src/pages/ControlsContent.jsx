@@ -51,7 +51,7 @@ const ControlsContent = ({ db, app }) => {
     const [medicines, setMedicines] = useState([]);
     const [openScheduleDialog, setOpenScheduleDialog] = useState(false);
     const [openMedicineDialog, setOpenMedicineDialog] = useState(false);
-    const [newSchedule, setNewSchedule] = useState({ medicineId: "", time: "" }); // Changed:  medicineId, no dose
+    const [newSchedule, setNewSchedule] = useState({ medicineId: "", time: "" }); // Changed:  medicineId, no dose
     const [newMedicine, setNewMedicine] = useState({ name: "", dose: "" });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
@@ -107,7 +107,7 @@ const ControlsContent = ({ db, app }) => {
                                 return {
                                     id,
                                     medicineName: medicine ? medicine.name : "Unknown", // Store name,
-                                    dose: medicine ? medicine.dose : "Unknown",     //and dose
+                                    dose: medicine ? medicine.dose : "Unknown",     //and dose
                                     medicineId, // Keep the ID
                                     time,
                                 };
@@ -193,7 +193,7 @@ const ControlsContent = ({ db, app }) => {
             // Simulate the 2-second delay using a Promise
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            setIsDispensing(false);  // Update local state
+            setIsDispensing(false);  // Update local state
             await updateRealtimeData(`config/${userUid}/isDispensing`, false); // Reset in DB
         }
     };
@@ -283,7 +283,7 @@ const ControlsContent = ({ db, app }) => {
                 if (medicineDocSnap.exists()) {
                     const currentMedicineData = medicineDocSnap.data();
                     const updatedMedicineData = { ...currentMedicineData };
-                    delete updatedMedicineData[id];  // Delete the medicine
+                    delete updatedMedicineData[id];  // Delete the medicine
                     await setDoc(medicineDocRef, updatedMedicineData);
                 }
 
