@@ -21,7 +21,6 @@ import {
     MenuItem,
     InputLabel,
     FormControl,
-    FormHelperText,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -40,6 +39,13 @@ import {
     setDoc,
     deleteDoc,
     onSnapshot,
+    getFirestore,
+    addDoc,
+    query,
+    where,
+    orderBy,
+    getDocs, // Import getDocs
+    writeBatch, // Import writeBatch
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getDatabase, ref, onValue, set, update } from "firebase/database"; // Import update
@@ -51,7 +57,12 @@ const ControlsContent = ({ db, app }) => {
     const [medicines, setMedicines] = useState([]);
     const [openScheduleDialog, setOpenScheduleDialog] = useState(false);
     const [openMedicineDialog, setOpenMedicineDialog] = useState(false);
-    const [newSchedule, setNewSchedule] = useState({ medicineId: "", time: "" }); // Changed:  medicineId, no dose
+    const [newSchedule, setNewSchedule] = useState({
+        medicineId: "",
+        time: "",
+        intervalType: "once", // 'once', 'hourly', 'interval'
+        intervalValue: 1, // e.g., every 2 hours
+    }); // Changed:  medicineId, no dose
     const [newMedicine, setNewMedicine] = useState({ name: "", dose: "" });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
@@ -62,6 +73,8 @@ const ControlsContent = ({ db, app }) => {
 
     const auth = getAuth();
     const realtimeDb = getDatabase(app);
+    const firestoreDb = getFirestore(app); // Get Firestore instance
+
 
     useEffect(() => {
         const unsubscribeAuth = auth.onAuthStateChanged((user) => {
@@ -81,7 +94,7 @@ const ControlsContent = ({ db, app }) => {
                 setLoading(true);
                 try {
                     // Fetch Medicines and set up real-time listener (Firestore)
-                    const medicineDocRef = doc(db, "medicine", userUid);
+                    const medicineDocRef = doc(firestoreDb, "medicine", userUid);
 
                     const unsubscribeMedicine = onSnapshot(medicineDocRef, (medicineDocSnap) => {
                         if (medicineDocSnap.exists()) {
@@ -98,18 +111,20 @@ const ControlsContent = ({ db, app }) => {
                     });
 
                     // Fetch Schedules and set up real-time listener (Firestore)
-                    const scheduleDocRef = doc(db, "schedule", userUid);
+                    const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
                     const unsubscribeSchedule = onSnapshot(scheduleDocRef, (scheduleDocSnap) => {
                         if (scheduleDocSnap.exists()) {
                             const scheduleData = scheduleDocSnap.data();
-                            const schedulesArray = Object.entries(scheduleData).map(([id, { medicineId, time }]) => { // Changed: medicineId
+                            const schedulesArray = Object.entries(scheduleData).map(([id, { medicineId, time, intervalType, intervalValue }]) => { // Added intervalType, intervalValue
                                 const medicine = medicines.find((m) => m.id === medicineId); // Find medicine
                                 return {
                                     id,
                                     medicineName: medicine ? medicine.name : "Unknown", // Store name,
-                                    dose: medicine ? medicine.dose : "Unknown",     //and dose
+                                    dose: medicine ? medicine.dose : "Unknown",                                         //and dose
                                     medicineId, // Keep the ID
                                     time,
+                                    intervalType, // Store the interval type
+                                    intervalValue, // Store the interval value
                                 };
                             });
                             setSchedules(schedulesArray);
@@ -157,11 +172,11 @@ const ControlsContent = ({ db, app }) => {
             };
             fetchInitialData();
         }
-    }, [db, realtimeDb, userUid, medicines]);
+    }, [firestoreDb, realtimeDb, userUid, medicines]);
 
     const updateFirestoreData = async (collectionName, docId, data) => {
         try {
-            const docRef = doc(db, collectionName, docId);
+            const docRef = doc(firestoreDb, collectionName, docId);
             await setDoc(docRef, data);
         } catch (error) {
             console.error(`Error updating ${collectionName}:`, error);
@@ -193,7 +208,7 @@ const ControlsContent = ({ db, app }) => {
             // Simulate the 2-second delay using a Promise
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            setIsDispensing(false);  // Update local state
+            setIsDispensing(false);  // Update local state
             await updateRealtimeData(`config/${userUid}/isDispensing`, false); // Reset in DB
         }
     };
@@ -205,11 +220,13 @@ const ControlsContent = ({ db, app }) => {
                 [newScheduleId]: {
                     medicineId: newSchedule.medicineId, // Store ID
                     time: newSchedule.time,
+                    intervalType: newSchedule.intervalType, // Store interval type
+                    intervalValue: newSchedule.intervalValue, // Store interval value
                 },
             };
 
             try {
-                const scheduleDocRef = doc(db, "schedule", userUid);
+                const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
                 const scheduleDocSnap = await getDoc(scheduleDocRef);
                 let currentScheduleData = {};
                 if (scheduleDocSnap.exists()) {
@@ -218,7 +235,23 @@ const ControlsContent = ({ db, app }) => {
                 const updatedScheduleData = { ...currentScheduleData, ...scheduleData };
 
                 await setDoc(scheduleDocRef, updatedScheduleData);
-                setNewSchedule({ medicineId: "", time: "" }); // Clear
+
+                // Add to history here
+                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications"); // Subcollection
+                const medicine = medicines.find(m => m.id === newSchedule.medicineId); // Find medicine
+                if (medicine) {
+                    await addDoc(historyCollectionRef, {
+                        medicineName: medicine.name,
+                        dose: medicine.dose,
+                        time: new Date(), // Store current time of scheduling
+                        scheduledTime: newSchedule.time, // Store scheduled time
+                        taken: false, // Initial status
+                        status: "Scheduled",
+                    });
+                }
+
+
+                setNewSchedule({ medicineId: "", time: "", intervalType: "once", intervalValue: 1 }); // Clear
                 setOpenScheduleDialog(false);
             } catch (error) {
                 console.error("Error adding schedule:", error);
@@ -237,7 +270,7 @@ const ControlsContent = ({ db, app }) => {
             };
 
             try {
-                const medicineDocRef = doc(db, "medicine", userUid);
+                const medicineDocRef = doc(firestoreDb, "medicine", userUid);
                 const medicineDocSnap = await getDoc(medicineDocRef);
                 let currentMedicineData = {};
                 if (medicineDocSnap.exists()) {
@@ -248,6 +281,15 @@ const ControlsContent = ({ db, app }) => {
 
                 // Also add to stock levels in RTDB, initialize with 0.
                 await updateRealtimeData(`config/${userUid}/stockLevels/${newMedicine.name}`, 0);
+
+                // Initialize history collection for this user.  Do it *here*, after a medicine is added.
+                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
+                // We don't need to add a document here, just create the collection path.
+                // Firestore creates collections implicitly when you add a document.
+                //  If you want to explicitly create it, you could add an empty doc:
+                // await setDoc(doc(historyCollectionRef, "initial"), {});
+
+
                 setNewMedicine({ name: "", dose: "" });
                 setOpenMedicineDialog(false);
             } catch (error) {
@@ -259,7 +301,7 @@ const ControlsContent = ({ db, app }) => {
     const handleDeleteSchedule = async (id) => {
         if (userUid) {
             try {
-                const scheduleDocRef = doc(db, "schedule", userUid);
+                const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
                 const scheduleDocSnap = await getDoc(scheduleDocRef);
                 if (scheduleDocSnap.exists()) {
                     const currentScheduleData = scheduleDocSnap.data();
@@ -277,24 +319,60 @@ const ControlsContent = ({ db, app }) => {
     const handleDeleteMedicine = async (id) => {
         if (userUid) {
             try {
-                // Delete from Firestore
-                const medicineDocRef = doc(db, "medicine", userUid);
+                // Get the medicine name *before* deleting it from the medicines collection
+                const medicineToDelete = medicines.find((med) => med.id === id);
+                const medicineNameToDelete = medicineToDelete ? medicineToDelete.name : null;
+
+                // Delete from Firestore - medicines collection
+                const medicineDocRef = doc(firestoreDb, "medicine", userUid);
                 const medicineDocSnap = await getDoc(medicineDocRef);
                 if (medicineDocSnap.exists()) {
                     const currentMedicineData = medicineDocSnap.data();
                     const updatedMedicineData = { ...currentMedicineData };
-                    delete updatedMedicineData[id];  // Delete the medicine
+                    delete updatedMedicineData[id];
                     await setDoc(medicineDocRef, updatedMedicineData);
                 }
 
                 // Remove from stock levels in RTDB
-                const medicineNameToDelete = medicines.find(med => med.id === id)?.name;
                 if (medicineNameToDelete) {
                     const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels`);
                     const updates = {};
                     updates[`/${medicineNameToDelete}`] = null; // Use null to remove the key
                     await update(stockLevelRef, updates);
                 }
+
+                // Delete corresponding history entries
+                if (medicineNameToDelete) {
+                    const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
+                    const historyQuery = query(historyCollectionRef, where("medicineName", "==", medicineNameToDelete)); // Use where clause
+                    const historySnapshot = await getDocs(historyQuery);
+
+                    const batch = writeBatch(firestoreDb); // Use a batch for efficiency
+
+                    historySnapshot.forEach((doc) => {
+                        batch.delete(doc.ref); // Add each delete operation to the batch
+                    });
+
+                    await batch.commit(); // Commit the batch
+                }
+
+                // Delete corresponding schedules
+                const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
+                const scheduleDocSnap = await getDoc(scheduleDocRef);
+
+                if (scheduleDocSnap.exists()) {
+                    const currentScheduleData = scheduleDocSnap.data();
+                    const updatedScheduleData = { ...currentScheduleData };
+
+                    // Iterate through schedules and delete those associated with the medicine
+                    for (const scheduleId in currentScheduleData) {
+                        if (currentScheduleData[scheduleId].medicineId === id) { // Use the ID
+                            delete updatedScheduleData[scheduleId];
+                        }
+                    }
+                    await setDoc(scheduleDocRef, updatedScheduleData);
+                }
+
 
             } catch (error) {
                 console.error("Error deleting medicine:", error);
@@ -369,7 +447,7 @@ const ControlsContent = ({ db, app }) => {
                                             </IconButton>
                                         }
                                     >
-                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.dose} at ${schedule.time}`} /> {/* Display name and dose */}
+                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.dose} at ${schedule.time} (${schedule.intervalType}${schedule.intervalType !== 'once' ? `: ${schedule.intervalValue}` : ''})`} /> {/* Display name, dose, and interval */}
                                     </ListItem>
                                 ))}
                             </List>
@@ -517,6 +595,44 @@ const ControlsContent = ({ db, app }) => {
                         sx={{ mt: 2 }}
                         InputLabelProps={{ shrink: true }}
                     />
+
+                    <FormControl fullWidth sx={{ mt: 2 }}>
+                        <InputLabel id="interval-type-label">Interval</InputLabel>
+                        <Select
+                            labelId="interval-type-label"
+                            id="interval-type"
+                            value={newSchedule.intervalType}
+                            label="Interval"
+                            onChange={(e) =>
+                                setNewSchedule({
+                                    ...newSchedule,
+                                    intervalType: e.target.value,
+                                    intervalValue: 1, // Reset interval value when type changes
+                                })
+                            }
+                        >
+                            <MenuItem value="once">Once</MenuItem>
+                            <MenuItem value="hourly">Every Hour</MenuItem>
+                            <MenuItem value="interval">Every...</MenuItem>
+                        </Select>
+                    </FormControl>
+
+                    {newSchedule.intervalType === "interval" && (
+                        <TextField
+                            fullWidth
+                            label="Interval Value (hours)"
+                            type="number"
+                            value={newSchedule.intervalValue}
+                            onChange={(e) =>
+                                setNewSchedule({
+                                    ...newSchedule,
+                                    intervalValue: parseInt(e.target.value, 10) || 1,
+                                })
+                            }
+                            sx={{ mt: 2 }}
+                            min="1"
+                        />
+                    )}
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setOpenScheduleDialog(false)}>Cancel</Button>
