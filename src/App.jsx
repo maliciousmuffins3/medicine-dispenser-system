@@ -12,6 +12,7 @@ import LoadingOverlay from "./components/LoadingOverlay";
 import { useEffect, useState } from "react";
 import SignUp from "./pages/SignUp";
 import ForgotPassword from "./pages/ForgotPassword";
+import {db, app} from './firebase/firebaseConfig'
 
 const App = () => {
   const { user, loading, logout } = useAuth(); // Get user & loading state
@@ -44,7 +45,7 @@ const App = () => {
         <Route path="/" element={<HomeContent />} />
         <Route path="/home" element={<HomeContent />} />
         <Route path="/history" element={<HistoryContent />} />
-        <Route path="/controls" element={<ControlsContent uid={user.uid}/>} />
+        <Route path="/controls" element={<ControlsContent userUid={user.uid}/>} />
         <Route path="/settings" element={<SettingsContent displayName={user.displayName} email={user.email} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
