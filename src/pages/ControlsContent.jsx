@@ -50,6 +50,7 @@ import {
 import { getAuth } from "firebase/auth";
 import { getDatabase, ref, onValue, set, update } from "firebase/database"; // Import update
 import LoadingOverlay from "../components/LoadingOverlay";
+import { useNavigate } from "react-router-dom";
 
 const ControlsContent = ({ db, app }) => {
     const [isLocked, setIsLocked] = useState(false);
@@ -70,6 +71,7 @@ const ControlsContent = ({ db, app }) => {
     const [userUid, setUserUid] = useState(null);
     const [stockLevels, setStockLevels] = useState({});
     const [isDispensing, setIsDispensing] = useState(false); // New state for dispensing status
+    const navigate = useNavigate();
 
     const auth = getAuth();
     const realtimeDb = getDatabase(app);
@@ -253,6 +255,7 @@ const ControlsContent = ({ db, app }) => {
 
                 setNewSchedule({ medicineId: "", time: "", intervalType: "once", intervalValue: 1 }); // Clear
                 setOpenScheduleDialog(false);
+                navigate(0);
             } catch (error) {
                 console.error("Error adding schedule:", error);
             }
@@ -292,6 +295,7 @@ const ControlsContent = ({ db, app }) => {
 
                 setNewMedicine({ name: "", dose: "" });
                 setOpenMedicineDialog(false);
+                navigate(0);
             } catch (error) {
                 console.error("Error adding medicine:", error);
             }
@@ -309,6 +313,7 @@ const ControlsContent = ({ db, app }) => {
                     delete updatedScheduleData[id];
 
                     await setDoc(scheduleDocRef, updatedScheduleData);
+                    navigate(0);
                 }
             } catch (error) {
                 console.error("Error deleting schedule:", error);
@@ -371,6 +376,7 @@ const ControlsContent = ({ db, app }) => {
                         }
                     }
                     await setDoc(scheduleDocRef, updatedScheduleData);
+                    navigate(0);
                 }
 
 
