@@ -245,7 +245,7 @@ const ControlsContent = ({ db, app }) => {
                     await addDoc(historyCollectionRef, {
                         medicineName: medicine.name,
                         dose: medicine.dose,
-                        timeAdded: new Date(), // Store current time of scheduling
+                        time: new Date(), // Store current time of scheduling
                         scheduledTime: newSchedule.time, // Store scheduled time
                         taken: false, // Initial status
                         status: "Scheduled",
@@ -254,8 +254,8 @@ const ControlsContent = ({ db, app }) => {
 
 
                 setNewSchedule({ medicineId: "", time: "", intervalType: "once", intervalValue: 1 }); // Clear
-                setOpenScheduleDialog(false);
                 navigate(0);
+                setOpenScheduleDialog(false);
             } catch (error) {
                 console.error("Error adding schedule:", error);
             }
@@ -294,8 +294,8 @@ const ControlsContent = ({ db, app }) => {
 
 
                 setNewMedicine({ name: "", dose: "" });
-                setOpenMedicineDialog(false);
                 navigate(0);
+                setOpenMedicineDialog(false);
             } catch (error) {
                 console.error("Error adding medicine:", error);
             }
