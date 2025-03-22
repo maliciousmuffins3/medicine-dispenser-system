@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
     Container,
     Typography,
@@ -43,16 +43,15 @@ import {
     addDoc,
     query,
     where,
-    orderBy,
-    getDocs, // Import getDocs
-    writeBatch, // Import writeBatch
+    writeBatch,
+    getDocs
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { getDatabase, ref, onValue, set, update } from "firebase/database"; // Import update
+import { getDatabase, ref, onValue, set, update, off } from "firebase/database";
 import LoadingOverlay from "../components/LoadingOverlay";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
 
-const ControlsContent = ({ db, app }) => {
+const ControlsContent = ({ app }) => {
     const [isLocked, setIsLocked] = useState(false);
     const [schedules, setSchedules] = useState([]);
     const [medicines, setMedicines] = useState([]);
@@ -61,22 +60,39 @@ const ControlsContent = ({ db, app }) => {
     const [newSchedule, setNewSchedule] = useState({
         medicineId: "",
         time: "",
-        intervalType: "once", // 'once', 'hourly', 'interval'
-        intervalValue: 1, // e.g., every 2 hours
-    }); // Changed:  medicineId, no dose
+        intervalType: "once",
+        intervalValue: 1,
+    });
     const [newMedicine, setNewMedicine] = useState({ name: "", dose: "" });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
     const [loading, setLoading] = useState(true);
     const [userUid, setUserUid] = useState(null);
     const [stockLevels, setStockLevels] = useState({});
-    const [isDispensing, setIsDispensing] = useState(false); // New state for dispensing status
-    const navigate = useNavigate();
+    const [isDispensing, setIsDispensing] = useState(false);
 
-    const auth = getAuth();
+    const auth = getAuth(app);
     const realtimeDb = getDatabase(app);
-    const firestoreDb = getFirestore(app); // Get Firestore instance
+    const firestoreDb = getFirestore(app);
+    const navigate = useNavigate(); // Initialize useNavigate
 
+    // Cleanup function to store unsubscribe functions.
+    const cleanupRefs = useRef([]);
+
+    // Function to add cleanup functions.
+    const addCleanup = useCallback((cleanupFn) => {
+        cleanupRefs.current.push(cleanupFn);
+    }, []);
+
+    // Function to execute all cleanup functions.
+    const runCleanup = useCallback(() => {
+        cleanupRefs.current.forEach((cleanupFn) => {
+            if (typeof cleanupFn === 'function') { // Check if it's a function
+                cleanupFn();
+            }
+        });
+        cleanupRefs.current = []; // Clear the array
+    }, []);
 
     useEffect(() => {
         const unsubscribeAuth = auth.onAuthStateChanged((user) => {
@@ -87,8 +103,13 @@ const ControlsContent = ({ db, app }) => {
                 setLoading(false);
             }
         });
-        return () => unsubscribeAuth();
-    }, [auth]);
+        // Add auth unsubscribe to cleanup
+        addCleanup(() => unsubscribeAuth());
+
+        return () => {
+            runCleanup();
+        };
+    }, [auth, addCleanup, runCleanup]);
 
     useEffect(() => {
         if (userUid) {
@@ -107,33 +128,40 @@ const ControlsContent = ({ db, app }) => {
                                 dose,
                             }));
                             setMedicines(medicinesArray);
+
+                            // Fetch Schedules and set up real-time listener (Firestore)
+                            const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
+
+                            const unsubscribeSchedule = onSnapshot(scheduleDocRef, (scheduleDocSnap) => {
+                                if (scheduleDocSnap.exists()) {
+                                    const scheduleData = scheduleDocSnap.data();
+                                    const schedulesArray = Object.entries(scheduleData).map(([id, { medicineId, time, intervalType, intervalValue }]) => {
+                                        const medicine = medicinesArray.find((m) => m.id === medicineId); // Use medicinesArray here
+                                        return {
+                                            id,
+                                            medicineName: medicine ? medicine.name : "Unknown",
+                                            dose: medicine ? medicine.dose : "Unknown",
+                                            medicineId,
+                                            time,
+                                            intervalType,
+                                            intervalValue,
+                                        };
+                                    });
+                                    setSchedules(schedulesArray);
+                                } else {
+                                    setSchedules([]);
+                                }
+                            });
+                            addCleanup(() => unsubscribeSchedule()); // Add schedule unsubscribe
+
                         } else {
                             setMedicines([]);
+                            setSchedules([]); // Ensure schedules are also cleared if no medicines
                         }
                     });
 
-                    // Fetch Schedules and set up real-time listener (Firestore)
-                    const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
-                    const unsubscribeSchedule = onSnapshot(scheduleDocRef, (scheduleDocSnap) => {
-                        if (scheduleDocSnap.exists()) {
-                            const scheduleData = scheduleDocSnap.data();
-                            const schedulesArray = Object.entries(scheduleData).map(([id, { medicineId, time, intervalType, intervalValue }]) => { // Added intervalType, intervalValue
-                                const medicine = medicines.find((m) => m.id === medicineId); // Find medicine
-                                return {
-                                    id,
-                                    medicineName: medicine ? medicine.name : "Unknown", // Store name,
-                                    dose: medicine ? medicine.dose : "Unknown",                                         //and dose
-                                    medicineId, // Keep the ID
-                                    time,
-                                    intervalType, // Store the interval type
-                                    intervalValue, // Store the interval value
-                                };
-                            });
-                            setSchedules(schedulesArray);
-                        } else {
-                            setSchedules([]);
-                        }
-                    });
+                    // Add medicine unsubscribe to cleanup
+                    addCleanup(() => unsubscribeMedicine());
 
                     // Fetch config and stock levels from Realtime Database
                     const configRef = ref(realtimeDb, `config/${userUid}`);
@@ -143,7 +171,7 @@ const ControlsContent = ({ db, app }) => {
                             setIsLocked(configData.isLocked || false);
                             setNotifyCaregiver(configData.notifyCaregiver);
                             setStockLevels(configData.stockLevels || {});
-                            setIsDispensing(configData.isDispensing || false); // Get dispensing status
+                            setIsDispensing(configData.isDispensing || false);
                             let hasLowStock = false;
                             for (const medicineName in configData.stockLevels) {
                                 if (configData.stockLevels[medicineName] <= 5) {
@@ -160,13 +188,15 @@ const ControlsContent = ({ db, app }) => {
                             setIsDispensing(false);
                         }
                     });
+                    addCleanup(() => {
+                        try {
+                            off(configRef, 'value', unsubscribeConfig);
+                        } catch (e) {
+                            console.error("Error detaching config listener", e);
+                        }
+                    });
 
                     setLoading(false);
-                    return () => {
-                        unsubscribeMedicine();
-                        unsubscribeSchedule();
-                        unsubscribeConfig();
-                    };
                 } catch (error) {
                     console.error("Error fetching data:", error);
                     setLoading(false);
@@ -174,7 +204,11 @@ const ControlsContent = ({ db, app }) => {
             };
             fetchInitialData();
         }
-    }, [firestoreDb, realtimeDb, userUid, medicines]);
+
+        return () => {
+            runCleanup();
+        };
+    }, [firestoreDb, realtimeDb, userUid, addCleanup, runCleanup]);
 
     const updateFirestoreData = async (collectionName, docId, data) => {
         try {
@@ -204,26 +238,25 @@ const ControlsContent = ({ db, app }) => {
 
     const handleDispense = async () => {
         if (userUid) {
-            setIsDispensing(true); // Set local state immediately
-            await updateRealtimeData(`config/${userUid}/isDispensing`, true); // Set in DB
+            setIsDispensing(true);
+            await updateRealtimeData(`config/${userUid}/isDispensing`, true);
 
-            // Simulate the 2-second delay using a Promise
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
 
-            setIsDispensing(false);  // Update local state
-            await updateRealtimeData(`config/${userUid}/isDispensing`, false); // Reset in DB
+            setIsDispensing(false);
+            await updateRealtimeData(`config/${userUid}/isDispensing`, false);
         }
     };
 
     const handleAddSchedule = async () => {
-        if (newSchedule.medicineId && newSchedule.time && userUid) { // Changed: Check for medicineId
+        if (newSchedule.medicineId && newSchedule.time && userUid) {
             const newScheduleId = Date.now().toString();
             const scheduleData = {
                 [newScheduleId]: {
-                    medicineId: newSchedule.medicineId, // Store ID
+                    medicineId: newSchedule.medicineId,
                     time: newSchedule.time,
-                    intervalType: newSchedule.intervalType, // Store interval type
-                    intervalValue: newSchedule.intervalValue, // Store interval value
+                    intervalType: newSchedule.intervalType,
+                    intervalValue: newSchedule.intervalValue,
                 },
             };
 
@@ -238,24 +271,22 @@ const ControlsContent = ({ db, app }) => {
 
                 await setDoc(scheduleDocRef, updatedScheduleData);
 
-                // Add to history here
-                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications"); // Subcollection
-                const medicine = medicines.find(m => m.id === newSchedule.medicineId); // Find medicine
+                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
+                const medicine = medicines.find((m) => m.id === newSchedule.medicineId);
                 if (medicine) {
                     await addDoc(historyCollectionRef, {
                         medicineName: medicine.name,
                         dose: medicine.dose,
-                        time: new Date(), // Store current time of scheduling
-                        scheduledTime: newSchedule.time, // Store scheduled time
-                        taken: false, // Initial status
+                        time: new Date(),
+                        scheduledTime: newSchedule.time,
+                        taken: false,
                         status: "Scheduled",
                     });
                 }
 
-
-                setNewSchedule({ medicineId: "", time: "", intervalType: "once", intervalValue: 1 }); // Clear
-                navigate(0);
+                setNewSchedule({ medicineId: "", time: "", intervalType: "once", intervalValue: 1 });
                 setOpenScheduleDialog(false);
+                // No navigation here.  The onSnapshot listener updates the UI.
             } catch (error) {
                 console.error("Error adding schedule:", error);
             }
@@ -282,20 +313,13 @@ const ControlsContent = ({ db, app }) => {
                 const updatedMedicineData = { ...currentMedicineData, ...medicineData };
                 await setDoc(medicineDocRef, updatedMedicineData);
 
-                // Also add to stock levels in RTDB, initialize with 0.
                 await updateRealtimeData(`config/${userUid}/stockLevels/${newMedicine.name}`, 0);
 
-                // Initialize history collection for this user.  Do it *here*, after a medicine is added.
                 const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
-                // We don't need to add a document here, just create the collection path.
-                // Firestore creates collections implicitly when you add a document.
-                //  If you want to explicitly create it, you could add an empty doc:
-                // await setDoc(doc(historyCollectionRef, "initial"), {});
-
 
                 setNewMedicine({ name: "", dose: "" });
-                navigate(0);
                 setOpenMedicineDialog(false);
+                // No navigation here. The onSnapshot listener updates the UI.
             } catch (error) {
                 console.error("Error adding medicine:", error);
             }
@@ -311,10 +335,9 @@ const ControlsContent = ({ db, app }) => {
                     const currentScheduleData = scheduleDocSnap.data();
                     const updatedScheduleData = { ...currentScheduleData };
                     delete updatedScheduleData[id];
-
                     await setDoc(scheduleDocRef, updatedScheduleData);
-                    navigate(0);
                 }
+                // No navigation. The onSnapshot listener updates the UI.
             } catch (error) {
                 console.error("Error deleting schedule:", error);
             }
@@ -324,11 +347,9 @@ const ControlsContent = ({ db, app }) => {
     const handleDeleteMedicine = async (id) => {
         if (userUid) {
             try {
-                // Get the medicine name *before* deleting it from the medicines collection
                 const medicineToDelete = medicines.find((med) => med.id === id);
                 const medicineNameToDelete = medicineToDelete ? medicineToDelete.name : null;
 
-                // Delete from Firestore - medicines collection
                 const medicineDocRef = doc(firestoreDb, "medicine", userUid);
                 const medicineDocSnap = await getDoc(medicineDocRef);
                 if (medicineDocSnap.exists()) {
@@ -338,30 +359,27 @@ const ControlsContent = ({ db, app }) => {
                     await setDoc(medicineDocRef, updatedMedicineData);
                 }
 
-                // Remove from stock levels in RTDB
                 if (medicineNameToDelete) {
                     const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels`);
                     const updates = {};
-                    updates[`/${medicineNameToDelete}`] = null; // Use null to remove the key
+                    updates[`/${medicineNameToDelete}`] = null;
                     await update(stockLevelRef, updates);
                 }
 
-                // Delete corresponding history entries
                 if (medicineNameToDelete) {
                     const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
-                    const historyQuery = query(historyCollectionRef, where("medicineName", "==", medicineNameToDelete)); // Use where clause
+                    const historyQuery = query(historyCollectionRef, where("medicineName", "==", medicineNameToDelete));
                     const historySnapshot = await getDocs(historyQuery);
 
-                    const batch = writeBatch(firestoreDb); // Use a batch for efficiency
+                    const batch = writeBatch(firestoreDb);
 
                     historySnapshot.forEach((doc) => {
-                        batch.delete(doc.ref); // Add each delete operation to the batch
+                        batch.delete(doc.ref);
                     });
 
-                    await batch.commit(); // Commit the batch
+                    await batch.commit();
                 }
 
-                // Delete corresponding schedules
                 const scheduleDocRef = doc(firestoreDb, "schedule", userUid);
                 const scheduleDocSnap = await getDoc(scheduleDocRef);
 
@@ -369,16 +387,14 @@ const ControlsContent = ({ db, app }) => {
                     const currentScheduleData = scheduleDocSnap.data();
                     const updatedScheduleData = { ...currentScheduleData };
 
-                    // Iterate through schedules and delete those associated with the medicine
                     for (const scheduleId in currentScheduleData) {
-                        if (currentScheduleData[scheduleId].medicineId === id) { // Use the ID
+                        if (currentScheduleData[scheduleId].medicineId === id) {
                             delete updatedScheduleData[scheduleId];
                         }
                     }
                     await setDoc(scheduleDocRef, updatedScheduleData);
-                    navigate(0);
                 }
-
+                // No navigation. The onSnapshot listener updates the UI.
 
             } catch (error) {
                 console.error("Error deleting medicine:", error);
@@ -394,7 +410,6 @@ const ControlsContent = ({ db, app }) => {
         }
     };
 
-    // Function to handle updating stock level (Realtime Database)
     const handleUpdateStock = async (medicineName, newStock) => {
         if (userUid) {
             await updateRealtimeData(`config/${userUid}/stockLevels/${medicineName}`, newStock);
@@ -416,7 +431,6 @@ const ControlsContent = ({ db, app }) => {
             </Typography>
 
             <Stack spacing={3}>
-                {/* Dispense Medicine Button (Realtime Database) */}
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
@@ -427,14 +441,13 @@ const ControlsContent = ({ db, app }) => {
                             color="primary"
                             onClick={handleDispense}
                             sx={{ mt: 1 }}
-                            disabled={isDispensing} // Disable during dispensing
+                            disabled={isDispensing}
                         >
                             {isDispensing ? 'Dispensing...' : 'Dispense Now'}
                         </Button>
                     </CardContent>
                 </Card>
 
-                {/* Medicine Schedule Management (Firestore) */}
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
@@ -453,7 +466,7 @@ const ControlsContent = ({ db, app }) => {
                                             </IconButton>
                                         }
                                     >
-                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.dose} at ${schedule.time} (${schedule.intervalType}${schedule.intervalType !== 'once' ? `: ${schedule.intervalValue}` : ''})`} /> {/* Display name, dose, and interval */}
+                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.dose} at ${schedule.time} (${schedule.intervalType}${schedule.intervalType !== 'once' ? `: ${schedule.intervalValue}` : ''})`} />
                                     </ListItem>
                                 ))}
                             </List>
@@ -464,7 +477,6 @@ const ControlsContent = ({ db, app }) => {
                     </CardContent>
                 </Card>
 
-                {/* Medicine Management (Firestore) */}
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
@@ -494,7 +506,6 @@ const ControlsContent = ({ db, app }) => {
                     </CardContent>
                 </Card>
 
-                {/* Lock/Unlock Dispenser (Realtime Database) */}
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
@@ -507,7 +518,6 @@ const ControlsContent = ({ db, app }) => {
                     </CardContent>
                 </Card>
 
-                {/* Refill & Inventory (Realtime Database - lowStockAlert) */}
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
@@ -553,7 +563,6 @@ const ControlsContent = ({ db, app }) => {
                     </CardContent>
                 </Card>
 
-                {/* Notifications & Alerts (Realtime Database) */}
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
@@ -567,7 +576,6 @@ const ControlsContent = ({ db, app }) => {
                 </Card>
             </Stack>
 
-            {/* Add Schedule Dialog (Firestore) */}
             <Dialog open={openScheduleDialog} onClose={() => setOpenScheduleDialog(false)}>
                 <DialogTitle>Add New Schedule</DialogTitle>
                 <DialogContent>
@@ -578,7 +586,7 @@ const ControlsContent = ({ db, app }) => {
                             id="medicine-select"
                             value={newSchedule.medicineId}
                             label="Medicine"
-                            onChange={(e) => setNewSchedule({ ...newSchedule, medicineId: e.target.value })} // Just store the ID
+                            onChange={(e) => setNewSchedule({ ...newSchedule, medicineId: e.target.value })}
                         >
                             {medicines.length === 0 ? (
                                 <MenuItem value="" disabled>No medicines available</MenuItem>
@@ -613,7 +621,7 @@ const ControlsContent = ({ db, app }) => {
                                 setNewSchedule({
                                     ...newSchedule,
                                     intervalType: e.target.value,
-                                    intervalValue: 1, // Reset interval value when type changes
+                                    intervalValue: 1,
                                 })
                             }
                         >
@@ -648,7 +656,6 @@ const ControlsContent = ({ db, app }) => {
                 </DialogActions>
             </Dialog>
 
-            {/* Add Medicine Dialog (Firestore) */}
             <Dialog open={openMedicineDialog} onClose={() => setOpenMedicineDialog(false)}>
                 <DialogTitle>Add New Medicine</DialogTitle>
                 <DialogContent>
