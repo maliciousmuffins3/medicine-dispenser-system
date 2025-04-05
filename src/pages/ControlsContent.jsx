@@ -48,7 +48,7 @@ import {
     getDocs
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { getDatabase, ref, onValue, set, update, off } from "firebase/database";
+import { getDatabase, ref, onValue, set, update, off, remove } from "firebase/database"; // Import remove
 import LoadingOverlay from "../components/LoadingOverlay";
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
 
@@ -62,7 +62,7 @@ const ControlsContent = ({ app }) => {
         medicineDose: "",
         time: "",
         intervalType: "once",
-        intervalValue: 1,
+        intervalValue: '', // Changed initial value to ''
     });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
@@ -288,7 +288,7 @@ const ControlsContent = ({ app }) => {
                         }
                     };
                 } else {
-                  // Add new schedule
+                    // Add new schedule
                     const nextMedicineKey = `med${schedules.length + 1}`;
                     updatedScheduleData = {
                         ...currentScheduleData,
@@ -300,6 +300,14 @@ const ControlsContent = ({ app }) => {
                             intervalValue: newSchedule.intervalValue,
                         }
                     };
+
+                    // Also update stockLevels in realtime db
+                    if (!stockLevels[newSchedule.medicineName]) {
+                        const newStockLevels = { ...stockLevels };
+                        newStockLevels[newSchedule.medicineName] = 0;  // Or any default value you want to set
+                        setStockLevels(newStockLevels); // Update the state
+                        await updateRealtimeData(`config/${userUid}/stockLevels`, newStockLevels); // And the database
+                    }
                 }
                 await setDoc(scheduleDocRef, updatedScheduleData);
 
@@ -314,7 +322,7 @@ const ControlsContent = ({ app }) => {
                     status: editIndex !== null ? "Updated" : "Scheduled",
                 });
 
-                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: 1 });
+                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '' }); // intervalValue set to ''
                 setOpenScheduleDialog(false);
                 setInputErrors({}); // Clear errors on success
                 setEditIndex(null); // Reset edit index
@@ -334,13 +342,27 @@ const ControlsContent = ({ app }) => {
                     const currentScheduleData = scheduleDocSnap.data();
                     const updatedScheduleData = {};
                     let count = 1;
+                    let deletedMedicineName = ""; // Store name of deleted medicine
+
                     for (const key in currentScheduleData) {
                         if (key !== `med${index + 1}`) {
                             updatedScheduleData[`med${count}`] = currentScheduleData[key];
                             count++;
+                        } else {
+                            deletedMedicineName = currentScheduleData[key].medicineName; // Get name
                         }
                     }
                     await setDoc(scheduleDocRef, updatedScheduleData);
+
+                    // Remove corresponding stock level from Realtime Database
+                    if (deletedMedicineName) {
+                        const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels/${deletedMedicineName}`);
+                        await remove(stockLevelRef);
+                        // Update local state as well
+                        const newStockLevels = { ...stockLevels };
+                        delete newStockLevels[deletedMedicineName];
+                        setStockLevels(newStockLevels);
+                    }
                 }
                 // No navigation. The onSnapshot listener updates the UI.
             } catch (error) {
@@ -374,6 +396,17 @@ const ControlsContent = ({ app }) => {
         });
         setEditIndex(index);
         setOpenScheduleDialog(true);
+    };
+
+    const getIntervalDisplay = (intervalType, intervalValue) => {
+        if (intervalType === 'once') {
+            return 'Once';
+        } else if (intervalType === 'hourly') {
+            return 'Every Hour';
+        } else if (intervalType === 'interval' && intervalValue) {
+            return `Every ${intervalValue} hours`;
+        }
+        return '';
     };
 
     if (loading) {
@@ -411,7 +444,7 @@ const ControlsContent = ({ app }) => {
                 <Card>
                     <CardContent>
                         <Typography variant="h6">
-                            <InventoryIcon sx={{ mr: 1 }} /> Medication Schedule
+                            <InventoryIcon sx={{ mr: 1 }} /> Medicines / Medication Schedule
                         </Typography>
                         {schedules.length === 0 ? (
                             <Typography color="textSecondary">No schedules added.</Typography>
@@ -437,14 +470,14 @@ const ControlsContent = ({ app }) => {
                                             </>
                                         }
                                     >
-                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.medicineDose} at ${schedule.time} (${schedule.intervalType}${schedule.intervalType !== 'once' ? `: ${schedule.intervalValue}` : ''})`} />
+                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.medicineDose} at ${schedule.time} (${getIntervalDisplay(schedule.intervalType, schedule.intervalValue)})`} />
                                     </ListItem>
                                 ))}
                             </List>
                         )}
                         <Button startIcon={<AddIcon />} variant="outlined" onClick={() => {
                             setEditIndex(null);
-                            setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: 1 });
+                            setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '' });
                             setOpenScheduleDialog(true);
                         }}>
                             Add Schedule
@@ -571,7 +604,7 @@ const ControlsContent = ({ app }) => {
                                 setNewSchedule({
                                     ...newSchedule,
                                     intervalType: e.target.value,
-                                    intervalValue: 1,
+                                    intervalValue: '', // Reset intervalValue when intervalType changes
                                 })
                             }
 
@@ -589,23 +622,29 @@ const ControlsContent = ({ app }) => {
                         <TextField
                             fullWidth
                             label="Interval Value (hours)"
-                            type="number"
+                            type="text"
                             value={newSchedule.intervalValue}
-                            onChange={(e) =>
-                                setNewSchedule({
-                                    ...newSchedule,
-                                    intervalValue: parseInt(e.target.value, 10) || 1,
-                                })
-                            }
+                            onChange={(e) => {
+                                const numValue = parseInt(e.target.value, 10);
+                                if (!isNaN(numValue) || e.target.value === '') {
+                                    setNewSchedule({
+                                        ...newSchedule,
+                                        intervalValue: e.target.value === '' ? '' : numValue, // changed default to 0
+                                    });
+                                }
+                            }}
                             sx={{ mt: 2 }}
-                            min="1"
+                            inputProps={{
+                                pattern: "[0-9]*",
+                                min: "1",
+                            }}
                         />
                     )}
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => {
                         setOpenScheduleDialog(false);
-                        setInputErrors({}); // Clear errors on cancel
+                        setInputErrors({});
                         setEditIndex(null);
                     }}>Cancel</Button>
                     <Button variant="contained" color="primary" onClick={handleAddSchedule}>
@@ -618,3 +657,4 @@ const ControlsContent = ({ app }) => {
 };
 
 export default ControlsContent;
+
