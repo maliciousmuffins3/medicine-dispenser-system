@@ -45,13 +45,14 @@ import {
     query,
     where,
     writeBatch,
-    getDocs
+    getDocs,
+    Timestamp, // Import Timestamp
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getDatabase, ref, onValue, set, update, off, remove } from "firebase/database"; // Import remove
 import LoadingOverlay from "../components/LoadingOverlay";
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
-
+import { format } from 'date-fns';
 
 const ControlsContent = ({ app }) => {
     const [isLocked, setIsLocked] = useState(false);
@@ -62,7 +63,7 @@ const ControlsContent = ({ app }) => {
         medicineDose: "",
         time: "",
         intervalType: "once",
-        intervalValue: '', // Changed initial value to ''
+        intervalValue: '',
     });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
@@ -71,29 +72,26 @@ const ControlsContent = ({ app }) => {
     const [stockLevels, setStockLevels] = useState({});
     const [isDispensing, setIsDispensing] = useState(false);
     const [inputErrors, setInputErrors] = useState({});
-    const [editIndex, setEditIndex] = useState(null); // Track the index of the item being edited
+    const [editIndex, setEditIndex] = useState(null);
 
     const auth = getAuth(app);
     const realtimeDb = getDatabase(app);
     const firestoreDb = getFirestore(app);
-    const navigate = useNavigate(); // Initialize useNavigate
+    const navigate = useNavigate();
 
-    // Cleanup function to store unsubscribe functions.
     const cleanupRefs = useRef([]);
 
-    // Function to add cleanup functions.
     const addCleanup = useCallback((cleanupFn) => {
         cleanupRefs.current.push(cleanupFn);
     }, []);
 
-    // Function to execute all cleanup functions.
     const runCleanup = useCallback(() => {
         cleanupRefs.current.forEach((cleanupFn) => {
-            if (typeof cleanupFn === 'function') { // Check if it's a function
+            if (typeof cleanupFn === 'function') {
                 cleanupFn();
             }
         });
-        cleanupRefs.current = []; // Clear the array
+        cleanupRefs.current = [];
     }, []);
 
     useEffect(() => {
@@ -105,7 +103,6 @@ const ControlsContent = ({ app }) => {
                 setLoading(false);
             }
         });
-        // Add auth unsubscribe to cleanup
         addCleanup(() => unsubscribeAuth());
 
         return () => {
@@ -118,19 +115,18 @@ const ControlsContent = ({ app }) => {
             const fetchInitialData = async () => {
                 setLoading(true);
                 try {
-                    // Fetch Schedules and set up real-time listener (Firestore)
-                    const scheduleDocRef = doc(firestoreDb, "medicines", userUid); // Changed collection name
+                    const scheduleDocRef = doc(firestoreDb, "medicines", userUid);
                     const unsubscribeSchedule = onSnapshot(scheduleDocRef, (scheduleDocSnap) => {
                         if (scheduleDocSnap.exists()) {
                             const scheduleData = scheduleDocSnap.data();
-                            // Convert the object into an array of schedules.  The keys will be "med1", "med2", etc.
-                            const schedulesArray = Object.entries(scheduleData).map(([, { medicineName, medicineDose, time, intervalType, intervalValue }]) => {
+                            const schedulesArray = Object.entries(scheduleData).map(([, { medicineName, medicineDose, time, intervalType, intervalValue, date }]) => {
                                 return {
                                     medicineName,
                                     medicineDose,
                                     time,
                                     intervalType,
                                     intervalValue,
+                                    date: date ? date.toDate() : null, // Convert Timestamp to Date
                                 };
                             });
                             setSchedules(schedulesArray);
@@ -140,7 +136,6 @@ const ControlsContent = ({ app }) => {
                     });
                     addCleanup(() => unsubscribeSchedule());
 
-                    // Fetch config and stock levels from Realtime Database
                     const configRef = ref(realtimeDb, `config/${userUid}`);
                     const unsubscribeConfig = onValue(configRef, (snapshot) => {
                         const configData = snapshot.val();
@@ -247,11 +242,10 @@ const ControlsContent = ({ app }) => {
             hasErrors = true;
         }
 
-        // Check for duplicates, excluding the item being edited
         if (schedules.some((schedule, index) =>
-                index !== editIndex &&
-                schedule.medicineName === newSchedule.medicineName &&
-                schedule.medicineDose === newSchedule.medicineDose
+            index !== editIndex &&
+            schedule.medicineName === newSchedule.medicineName &&
+            schedule.medicineDose === newSchedule.medicineDose
         )) {
             newErrors.duplicate = "A schedule with this medicine name and dose already exists";
             hasErrors = true;
@@ -260,12 +254,12 @@ const ControlsContent = ({ app }) => {
         setInputErrors(newErrors);
 
         if (hasErrors) {
-            return; // Stop if there are errors
+            return;
         }
 
         if (newSchedule.medicineName && newSchedule.time && newSchedule.medicineDose && userUid) {
             try {
-                const scheduleDocRef = doc(firestoreDb, "medicines", userUid); // Changed collection name
+                const scheduleDocRef = doc(firestoreDb, "medicines", userUid);
                 const scheduleDocSnap = await getDoc(scheduleDocRef);
                 let currentScheduleData = {};
 
@@ -274,21 +268,27 @@ const ControlsContent = ({ app }) => {
                 }
 
                 let updatedScheduleData = {};
+                const selectedTime = newSchedule.time;
+                const [hours, minutes] = selectedTime.split(':').map(Number);
+                const now = new Date();
+                now.setHours(hours);
+                now.setMinutes(minutes);
+                const scheduledDateTime = Timestamp.fromDate(now); // Convert Date to Timestamp
+
                 if (editIndex !== null) {
-                    // Edit existing schedule
-                    const medicineKey = `med${editIndex + 1}`; // "med1", "med2", etc.
+                    const medicineKey = `med${editIndex + 1}`;
                     updatedScheduleData = {
                         ...currentScheduleData,
                         [medicineKey]: {
                             medicineName: newSchedule.medicineName,
                             medicineDose: newSchedule.medicineDose,
                             time: newSchedule.time,
+                            date: scheduledDateTime,
                             intervalType: newSchedule.intervalType,
                             intervalValue: newSchedule.intervalValue,
                         }
                     };
                 } else {
-                    // Add new schedule
                     const nextMedicineKey = `med${schedules.length + 1}`;
                     updatedScheduleData = {
                         ...currentScheduleData,
@@ -296,19 +296,20 @@ const ControlsContent = ({ app }) => {
                             medicineName: newSchedule.medicineName,
                             medicineDose: newSchedule.medicineDose,
                             time: newSchedule.time,
+                            date: scheduledDateTime,
                             intervalType: newSchedule.intervalType,
                             intervalValue: newSchedule.intervalValue,
                         }
                     };
 
-                    // Also update stockLevels in realtime db
                     if (!stockLevels[newSchedule.medicineName]) {
                         const newStockLevels = { ...stockLevels };
-                        newStockLevels[newSchedule.medicineName] = 0;  // Or any default value you want to set
-                        setStockLevels(newStockLevels); // Update the state
-                        await updateRealtimeData(`config/${userUid}/stockLevels`, newStockLevels); // And the database
+                        newStockLevels[newSchedule.medicineName] = 0;
+                        setStockLevels(newStockLevels);
+                        await updateRealtimeData(`config/${userUid}/stockLevels`, newStockLevels);
                     }
                 }
+
                 await setDoc(scheduleDocRef, updatedScheduleData);
 
                 const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
@@ -316,17 +317,15 @@ const ControlsContent = ({ app }) => {
                 await addDoc(historyCollectionRef, {
                     medicineName: newSchedule.medicineName,
                     dose: newSchedule.medicineDose,
-                    time: new Date(),
                     scheduledTime: newSchedule.time,
-                    taken: false,
+                    time: Timestamp.now(), // Store the current time as Timestamp
                     status: editIndex !== null ? "Updated" : "Scheduled",
                 });
 
-                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '' }); // intervalValue set to ''
+                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '' });
                 setOpenScheduleDialog(false);
-                setInputErrors({}); // Clear errors on success
-                setEditIndex(null); // Reset edit index
-                // No navigation here.  The onSnapshot listener updates the UI.
+                setInputErrors({});
+                setEditIndex(null);
             } catch (error) {
                 console.error("Error adding/editing schedule:", error);
             }
@@ -336,35 +335,32 @@ const ControlsContent = ({ app }) => {
     const handleDeleteSchedule = async (index) => {
         if (userUid) {
             try {
-                const scheduleDocRef = doc(firestoreDb, "medicines", userUid); // Changed collection name
+                const scheduleDocRef = doc(firestoreDb, "medicines", userUid);
                 const scheduleDocSnap = await getDoc(scheduleDocRef);
                 if (scheduleDocSnap.exists()) {
                     const currentScheduleData = scheduleDocSnap.data();
                     const updatedScheduleData = {};
                     let count = 1;
-                    let deletedMedicineName = ""; // Store name of deleted medicine
+                    let deletedMedicineName = "";
 
                     for (const key in currentScheduleData) {
                         if (key !== `med${index + 1}`) {
                             updatedScheduleData[`med${count}`] = currentScheduleData[key];
                             count++;
                         } else {
-                            deletedMedicineName = currentScheduleData[key].medicineName; // Get name
+                            deletedMedicineName = currentScheduleData[key].medicineName;
                         }
                     }
                     await setDoc(scheduleDocRef, updatedScheduleData);
 
-                    // Remove corresponding stock level from Realtime Database
                     if (deletedMedicineName) {
                         const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels/${deletedMedicineName}`);
                         await remove(stockLevelRef);
-                        // Update local state as well
                         const newStockLevels = { ...stockLevels };
                         delete newStockLevels[deletedMedicineName];
                         setStockLevels(newStockLevels);
                     }
                 }
-                // No navigation. The onSnapshot listener updates the UI.
             } catch (error) {
                 console.error("Error deleting schedule:", error);
             }
@@ -450,29 +446,37 @@ const ControlsContent = ({ app }) => {
                             <Typography color="textSecondary">No schedules added.</Typography>
                         ) : (
                             <List>
-                                {schedules.map((schedule, index) => (
-                                    <ListItem
-                                        key={index} // Use index as key
-                                        secondaryAction={
-                                            <>
-                                                <IconButton
-                                                    color="primary"
-                                                    onClick={() => handleEditSchedule(index)}
-                                                >
-                                                    <EditIcon />
-                                                </IconButton>
-                                                <IconButton
-                                                    color="error"
-                                                    onClick={() => handleDeleteSchedule(index)}
-                                                >
-                                                    <DeleteIcon />
-                                                </IconButton>
-                                            </>
-                                        }
-                                    >
-                                        <ListItemText primary={`${schedule.medicineName} - ${schedule.medicineDose} at ${schedule.time} (${getIntervalDisplay(schedule.intervalType, schedule.intervalValue)})`} />
-                                    </ListItem>
-                                ))}
+                                {schedules.map((schedule, index) => {
+                                    const formattedDate = schedule.date
+                                        ? format(schedule.date, 'PPP')
+                                        : 'No Date';
+                                    return (
+                                        <ListItem
+                                            key={index}
+                                            secondaryAction={
+                                                <>
+                                                    <IconButton
+                                                        color="primary"
+                                                        onClick={() => handleEditSchedule(index)}
+                                                    >
+                                                        <EditIcon />
+                                                    </IconButton>
+                                                    <IconButton
+                                                        color="error"
+                                                        onClick={() => handleDeleteSchedule(index)}
+                                                    >
+                                                        <DeleteIcon />
+                                                    </IconButton>
+                                                </>
+                                            }
+                                        >
+                                            <ListItemText
+                                                primary={`${schedule.medicineName} - ${schedule.medicineDose}`}
+                                                secondary={`Scheduled at ${schedule.time} on ${formattedDate} (${getIntervalDisplay(schedule.intervalType, schedule.intervalValue)})`}
+                                            />
+                                        </ListItem>
+                                    );
+                                })}
                             </List>
                         )}
                         <Button startIcon={<AddIcon />} variant="outlined" onClick={() => {
@@ -604,7 +608,7 @@ const ControlsContent = ({ app }) => {
                                 setNewSchedule({
                                     ...newSchedule,
                                     intervalType: e.target.value,
-                                    intervalValue: '', // Reset intervalValue when intervalType changes
+                                    intervalValue: '',
                                 })
                             }
 
@@ -629,7 +633,7 @@ const ControlsContent = ({ app }) => {
                                 if (!isNaN(numValue) || e.target.value === '') {
                                     setNewSchedule({
                                         ...newSchedule,
-                                        intervalValue: e.target.value === '' ? '' : numValue, // changed default to 0
+                                        intervalValue: e.target.value === '' ? '' : numValue,
                                     });
                                 }
                             }}
@@ -657,4 +661,3 @@ const ControlsContent = ({ app }) => {
 };
 
 export default ControlsContent;
-
