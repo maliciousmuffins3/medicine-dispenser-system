@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Typography, Card, CardContent, Grid, Divider, List, ListItem, ListItemText, Box } from "@mui/material";
-import { doc, collection, onSnapshot, Timestamp } from 'firebase/firestore';
+import { Container, Typography, Card, CardContent, Grid, Divider, List, ListItem, ListItemText, Box, Button } from "@mui/material";
+import { doc, collection, onSnapshot, Timestamp, writeBatch, query, where, getDocs } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { format } from 'date-fns';
 import { db } from '../firebase/firebaseConfig'; // Import the firebase config
 
-// Utility function
+// Utility function (moved to this file)
 export const calculateNextInterval = (scheduledTime, intervalType, intervalValue) => {
     if (!scheduledTime || !intervalType || !intervalValue) {
         return null;
@@ -40,7 +40,6 @@ export const calculateNextInterval = (scheduledTime, intervalType, intervalValue
     }
     return nextScheduledTime;
 };
-
 
 
 const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistory }) => {
@@ -113,7 +112,7 @@ const HistoryContent = () => {
     const [takenHistory, setTakenHistory] = useState([]);
     const [missedHistory, setMissedHistory] = useState([]);
     const [currentDate, setCurrentDate] = useState('');
-    const [targetMedicine, setTargetMedicine] = useState({ name: 'Vitamins', dose: '20mg' }); // Define the target medicine
+    const [targetMedicine, setTargetMedicine] = useState({ name: '', dose: '' }); // Define the target medicine
     const [specialDoseCard, setSpecialDoseCard] = useState(null);
 
 
@@ -155,6 +154,7 @@ const HistoryContent = () => {
                 const fetchedMissedHistory = [];
                 let targetDose = null; // To store the target medicine
                 let specialCard = null;
+                let nextUpcomingDose = null;
 
 
                 snapshot.forEach((doc) => {
@@ -173,7 +173,8 @@ const HistoryContent = () => {
                         userUid: userUid,
                         medicationId: doc.id,
                         takenTime: data.takenTime,
-
+                        intervalType: data.intervalType,
+                        intervalValue: data.intervalValue,
                     };
 
                     if (data.status === 'Taken') {
@@ -201,13 +202,25 @@ const HistoryContent = () => {
                         });
                     } else {
                         fetchedHistoryData.push(historyItem);
+                        // Check for the next upcoming dose
+                        if (!nextUpcomingDose) {
+                            nextUpcomingDose = historyItem;
+                        }
+                        else {
+                            const currentItemTime = historyItem.rawScheduledTime instanceof Timestamp ? historyItem.rawScheduledTime.toDate() : new Date(historyItem.rawScheduledTime);
+                            const nextDoseTime = nextUpcomingDose.rawScheduledTime instanceof Timestamp ? nextUpcomingDose.toDate() : new Date(nextUpcomingDose.rawScheduledTime);
+
+                            if (currentItemTime < nextDoseTime) {
+                                nextUpcomingDose = historyItem;
+                            }
+                        }
                     }
 
-                    // Check for the target medicine
+                    // Check for the target medicine for the special card
                     if (data.medicineName === targetMedicine.name && data.dose === targetMedicine.dose) {
                         targetDose = historyItem;
-                        specialCard = ( //moved the card here
-                            <Card key={doc.id} sx={{ backgroundColor: "#e8f5e9", p: 2, mb: 2 }}>
+                        specialCard = (
+                            <Card key={doc.id} sx={{ backgroundColor: "#bbdefb", p: 2, mb: 2 }}>
                                 <Typography variant="body1">
                                     <strong>{data.medicineName}</strong> - {data.dose}
                                 </Typography>
@@ -251,14 +264,14 @@ const HistoryContent = () => {
                 setHistoryFetched(true);
                 setTakenHistory(fetchedTakenHistory);
                 setMissedHistory(fetchedMissedHistory);
-                setSpecialDoseCard(specialCard); //set the state
+                setSpecialDoseCard(specialCard);
 
-                // Prioritize "Vitamins 20mg"
-                let nextDose = finalHistoryData.find(item => item.status !== 'Taken');
-                if (targetDose) {
-                    nextDose = targetDose;
+                // Set next scheduled dose
+                if (targetDose && targetDose.status !== 'Taken') {
+                    setNextScheduledDose(targetDose);
+                } else {
+                    setNextScheduledDose(nextUpcomingDose || null);
                 }
-                setNextScheduledDose(nextDose || null);
 
             } catch (err) {
                 setError(err);
@@ -282,6 +295,33 @@ const HistoryContent = () => {
         }
     }, [currentUser]);
 
+    const handleDeleteHistory = async () => {
+        if (!currentUser) return;
+
+        const userUid = currentUser.uid;
+        const historyCollectionRef = collection(db, "history", userUid, "medications");
+        const batch = writeBatch(db);
+
+        try {
+            // Query for 'Taken' and 'Missed' records
+            const q = query(historyCollectionRef, where("status", "in", ["Taken", "Missed"]));
+            const snapshot = await getDocs(q);
+
+            snapshot.forEach((doc) => {
+                batch.delete(doc.ref);
+            });
+
+            // Commit the batch deletion
+            await batch.commit();
+
+            // Refresh the history data
+            fetchHistory(currentUser);
+            console.log("Taken and Missed history deleted successfully.");
+        } catch (error) {
+            console.error("Error deleting history:", error);
+            setError(error);
+        }
+    };
 
 
     if (loading) {
@@ -305,8 +345,23 @@ const HistoryContent = () => {
                 Date: {currentDate}
             </Typography>
 
+            {/* Next Scheduled Dose */}
+            {nextScheduledDose && (
+                <Card sx={{ mt: 2, mb: 2, order: -3, backgroundColor: '#f0f4c3' }}>
+                    <CardContent>
+                        <Typography variant="h6" fontWeight="bold">Next Scheduled Dose</Typography>
+                        <Typography variant="body1">Medicine: {nextScheduledDose.medicineName}</Typography>
+                        <Typography variant="body1">Dose: {nextScheduledDose.dose}</Typography>
+                        <Typography variant="body1">
+                            Scheduled Time: {nextScheduledDose.scheduledTime}
+                        </Typography>
+                    </CardContent>
+                </Card>
+            )}
+            {specialDoseCard}
+
             {/* Grid Container */}
-            <Grid container spacing={2} sx={{  order: -4 }}>
+            <Grid container spacing={2} sx={{ order: -4 }}>
                 {historyData.map((item) => (
                     <Grid item xs={12} sm={6} md={4} key={item.id}>
                         <HistoryCard
@@ -320,23 +375,20 @@ const HistoryContent = () => {
                 ))}
             </Grid>
 
-            {/* Next Scheduled Dose */}
-            {specialDoseCard}
-            {nextScheduledDose && (
-                <Container sx={{ mt: 4, order: -3 }}>
-                    <Typography variant="h6" fontWeight="bold">Next Scheduled Dose</Typography>
-                    <Card sx={{ backgroundColor: "#e3f2fd", p: 2, mt: 1 }}>
-                        <Typography variant="body1">
-                            <strong>{nextScheduledDose.medicineName}</strong> - {nextScheduledDose.dose}
-                        </Typography>
-                        <Typography variant="body2">Scheduled at: {nextScheduledDose.scheduledTime}</Typography>
-                    </Card>
-                </Container>
-            )}
+                        {/* Delete History Button */}
+                        <Box display="flex" justifyContent="center" mt={4} mb={2}>
+                <Button
+                    variant="contained"
+                    color="error"
+                    onClick={handleDeleteHistory}
+                >
+                    Delete Taken and Missed History
+                </Button>
+            </Box>
 
             {/* Missed Medications Card */}
             {missedHistory.length > 0 && (
-                <Card sx={{ mb: 4, order: -2, mt: 5 }}>
+                <Card sx={{ mb: 4, order: -2, }}>
                     <CardContent>
                         <Typography variant="h6" fontWeight="bold" gutterBottom>
                             Missed Medications ({currentDate})
@@ -357,7 +409,7 @@ const HistoryContent = () => {
 
             {/* Taken Medications Card */}
             {takenHistory.length > 0 && (
-                <Card sx={{ mb: 4, order: -1, mt:5}}>
+                <Card sx={{ mb: 4, order: -1 }}>
                     <CardContent>
                         <Typography variant="h6" fontWeight="bold" gutterBottom>
                             Taken Medications
@@ -371,7 +423,7 @@ const HistoryContent = () => {
                                     <ListItem key={item.id}>
                                         <ListItemText
                                             primary={item.medicineName}
-                                            secondary={`Dose: ${item.dose}, Scheduled: ${item.scheduledTime}, Taken: ${takenTimeFormatted}`}
+                                            secondary={`Dose: ${item.dose}, Scheduled: ${item.scheduledTime}`}
                                         />
                                     </ListItem>
                                 );

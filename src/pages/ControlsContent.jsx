@@ -50,7 +50,6 @@ import {
 import { getAuth } from "firebase/auth";
 import { getDatabase, ref, onValue, set, update, off, remove } from "firebase/database"; // Import remove
 import LoadingOverlay from "../components/LoadingOverlay";
-import { useNavigate } from 'react-router-dom'; // Import useNavigate
 import { format } from 'date-fns';
 
 const ControlsContent = ({ app }) => {
@@ -77,7 +76,6 @@ const ControlsContent = ({ app }) => {
     const auth = getAuth(app);
     const realtimeDb = getDatabase(app);
     const firestoreDb = getFirestore(app);
-    const navigate = useNavigate();
 
     const cleanupRefs = useRef([]);
 
@@ -210,10 +208,10 @@ const ControlsContent = ({ app }) => {
             setIsDispensing(true);
             await updateRealtimeData(`config/${userUid}/isDispensing`, true);
 
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-
-            setIsDispensing(false);
-            await updateRealtimeData(`config/${userUid}/isDispensing`, false);
+            setTimeout(async () => {
+                setIsDispensing(false);
+                await updateRealtimeData(`config/${userUid}/isDispensing`, false);
+            }, 2000);
         }
     };
 
@@ -264,7 +262,7 @@ const ControlsContent = ({ app }) => {
                 const now = new Date();
                 now.setHours(hours);
                 now.setMinutes(minutes);
-                const scheduledDateTime = Timestamp.fromDate(now); // Convert Date to Timestamp
+                const scheduledDateTime = Timestamp.fromDate(now);
 
                 if (editIndex !== null) {
                     const scheduleIdToUpdate = schedules[editIndex].id;
@@ -681,4 +679,3 @@ const ControlsContent = ({ app }) => {
 };
 
 export default ControlsContent;
-
