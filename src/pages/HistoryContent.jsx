@@ -44,6 +44,7 @@ export const calculateNextInterval = (scheduledTime, intervalType, intervalValue
 
 
 const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistory }) => {
+    const hasPreviousHistory = previousHistory && previousHistory.length > 0;
 
     return (
         <Box sx={{ mb: 3, borderRadius: 2, boxShadow: 3 }}>
@@ -51,7 +52,7 @@ const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistor
             <Card
                 sx={{
                     backgroundColor: status === "Missed" ? "#ffebee" : status === "Taken" ? "#e0f7fa" : "#e8f5e9",
-                    borderRadius: "12px 12px 0 0",
+                    borderRadius: hasPreviousHistory ? "12px 12px 0 0" : "12px", // Only round top if there's previous history
                 }}
             >
                 <CardContent>
@@ -69,33 +70,35 @@ const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistor
             </Card>
 
             {/* Previous History List */}
-            <Card sx={{ backgroundColor: "#f5f5f5", borderRadius: "0 0 12px 12px" }}>
-                <CardContent>
-                    <Typography variant="subtitle1" fontWeight="bold">
-                        Previous Dispensing History
-                    </Typography>
-                    <Divider sx={{ mb: 1 }} />
-                    <List sx={{ maxHeight: 150, overflow: "auto" }}>
-                        {previousHistory.map((record, index) => {
-                            const recordTime = record.time instanceof Timestamp
-                                ? format(record.time.toDate(), 'PPPppp') // Format the timestamp
-                                : record.time;
-                            return (
-                                <ListItem key={index} sx={{ py: 0 }}>
-                                    <ListItemText
-                                        primary={recordTime}
-                                        secondary={
-                                            <Typography color={record.status === "Missed" ? "error" : "success"} variant="body2">
-                                                Status: {record.status}
-                                            </Typography>
-                                        }
-                                    />
-                                </ListItem>
-                            );
-                        })}
-                    </List>
-                </CardContent>
-            </Card>
+            {hasPreviousHistory && (
+                <Card sx={{ backgroundColor: "#f5f5f5", borderRadius: "0 0 12px 12px" }}>
+                    <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold">
+                            Previous Dispensing History
+                        </Typography>
+                        <Divider sx={{ mb: 1 }} />
+                        <List sx={{ maxHeight: 150, overflow: "auto" }}>
+                            {previousHistory.map((record, index) => {
+                                const recordTime = record.time instanceof Timestamp
+                                    ? format(record.time.toDate(), 'PPPppp')
+                                    : record.time;
+                                return (
+                                    <ListItem key={index} sx={{ py: 0 }}>
+                                        <ListItemText
+                                            primary={recordTime}
+                                            secondary={
+                                                <Typography color={record.status === "Missed" ? "error" : "success"} variant="body2">
+                                                    Status: {record.status}
+                                                </Typography>
+                                            }
+                                        />
+                                    </ListItem>
+                                );
+                            })}
+                        </List>
+                    </CardContent>
+                </Card>
+            )}
         </Box>
     );
 };
@@ -107,9 +110,11 @@ const HistoryContent = () => {
     const [currentUser, setCurrentUser] = useState(null);
     const [nextScheduledDose, setNextScheduledDose] = useState(null);
     const [historyFetched, setHistoryFetched] = useState(false);
-    const [takenHistory, setTakenHistory] = useState([]); // New state for "Taken" history
-    const [missedHistory, setMissedHistory] = useState([]); // New state for "Missed" history
+    const [takenHistory, setTakenHistory] = useState([]);
+    const [missedHistory, setMissedHistory] = useState([]);
     const [currentDate, setCurrentDate] = useState('');
+    const [targetMedicine, setTargetMedicine] = useState({ name: 'Vitamins', dose: '20mg' }); // Define the target medicine
+    const [specialDoseCard, setSpecialDoseCard] = useState(null);
 
 
     useEffect(() => {
@@ -120,7 +125,7 @@ const HistoryContent = () => {
 
         // Get and set current date
         const today = new Date();
-        const formattedDate = format(today, 'PPP'); // Using date-fns for formatting
+        const formattedDate = format(today, 'PPP');
         setCurrentDate(formattedDate);
 
         return () => unsubscribeAuth();
@@ -134,6 +139,7 @@ const HistoryContent = () => {
                 setNextScheduledDose(null);
                 setTakenHistory([]);
                 setMissedHistory([]);
+                setSpecialDoseCard(null);
             }
             return;
         }
@@ -147,7 +153,9 @@ const HistoryContent = () => {
                 const previousHistoryMap = new Map();
                 const fetchedTakenHistory = [];
                 const fetchedMissedHistory = [];
-                const fetchedHistory = [];
+                let targetDose = null; // To store the target medicine
+                let specialCard = null;
+
 
                 snapshot.forEach((doc) => {
                     const data = doc.data();
@@ -164,7 +172,7 @@ const HistoryContent = () => {
                         rawScheduledTime: data.scheduledTime,
                         userUid: userUid,
                         medicationId: doc.id,
-                        takenTime: data.takenTime, // Store takenTime
+                        takenTime: data.takenTime,
 
                     };
 
@@ -172,7 +180,7 @@ const HistoryContent = () => {
                         const takenTime = data.takenTime instanceof Timestamp
                             ? data.takenTime.toDate()
                             : data.takenTime;
-                        fetchedTakenHistory.push({ ...historyItem, takenTime }); // Store takenTime
+                        fetchedTakenHistory.push({ ...historyItem, takenTime });
                         if (!previousHistoryMap.has(data.medicineName)) {
                             previousHistoryMap.set(data.medicineName, []);
                         }
@@ -193,6 +201,20 @@ const HistoryContent = () => {
                         });
                     } else {
                         fetchedHistoryData.push(historyItem);
+                    }
+
+                    // Check for the target medicine
+                    if (data.medicineName === targetMedicine.name && data.dose === targetMedicine.dose) {
+                        targetDose = historyItem;
+                        specialCard = ( //moved the card here
+                            <Card key={doc.id} sx={{ backgroundColor: "#e8f5e9", p: 2, mb: 2 }}>
+                                <Typography variant="body1">
+                                    <strong>{data.medicineName}</strong> - {data.dose}
+                                </Typography>
+                                <Typography variant="body2">Scheduled at: {scheduledTime}</Typography>
+                                <Typography variant="body2">Status: {data.status}</Typography>
+                            </Card>
+                        );
                     }
                 });
 
@@ -229,9 +251,13 @@ const HistoryContent = () => {
                 setHistoryFetched(true);
                 setTakenHistory(fetchedTakenHistory);
                 setMissedHistory(fetchedMissedHistory);
+                setSpecialDoseCard(specialCard); //set the state
 
-
-                const nextDose = finalHistoryData.find(item => item.status !== 'Taken');
+                // Prioritize "Vitamins 20mg"
+                let nextDose = finalHistoryData.find(item => item.status !== 'Taken');
+                if (targetDose) {
+                    nextDose = targetDose;
+                }
                 setNextScheduledDose(nextDose || null);
 
             } catch (err) {
@@ -279,9 +305,38 @@ const HistoryContent = () => {
                 Date: {currentDate}
             </Typography>
 
+            {/* Grid Container */}
+            <Grid container spacing={2} sx={{  order: -4 }}>
+                {historyData.map((item) => (
+                    <Grid item xs={12} sm={6} md={4} key={item.id}>
+                        <HistoryCard
+                            medicineName={item.medicineName}
+                            dose={item.dose}
+                            scheduledTime={item.scheduledTime}
+                            status={item.status}
+                            previousHistory={item.previousHistory}
+                        />
+                    </Grid>
+                ))}
+            </Grid>
+
+            {/* Next Scheduled Dose */}
+            {specialDoseCard}
+            {nextScheduledDose && (
+                <Container sx={{ mt: 4, order: -3 }}>
+                    <Typography variant="h6" fontWeight="bold">Next Scheduled Dose</Typography>
+                    <Card sx={{ backgroundColor: "#e3f2fd", p: 2, mt: 1 }}>
+                        <Typography variant="body1">
+                            <strong>{nextScheduledDose.medicineName}</strong> - {nextScheduledDose.dose}
+                        </Typography>
+                        <Typography variant="body2">Scheduled at: {nextScheduledDose.scheduledTime}</Typography>
+                    </Card>
+                </Container>
+            )}
+
             {/* Missed Medications Card */}
             {missedHistory.length > 0 && (
-                <Card sx={{ mb: 4 }}>
+                <Card sx={{ mb: 4, order: -2, mt: 5 }}>
                     <CardContent>
                         <Typography variant="h6" fontWeight="bold" gutterBottom>
                             Missed Medications ({currentDate})
@@ -302,7 +357,7 @@ const HistoryContent = () => {
 
             {/* Taken Medications Card */}
             {takenHistory.length > 0 && (
-                <Card sx={{ mb: 4 }}>
+                <Card sx={{ mb: 4, order: -1, mt:5}}>
                     <CardContent>
                         <Typography variant="h6" fontWeight="bold" gutterBottom>
                             Taken Medications
@@ -326,33 +381,8 @@ const HistoryContent = () => {
                 </Card>
             )}
 
-            <Grid container spacing={2}>
-                {historyData.map((item) => (
-                    <Grid item xs={12} sm={6} md={4} key={item.id}>
-                        <HistoryCard
-                            medicineName={item.medicineName}
-                            dose={item.dose}
-                            scheduledTime={item.scheduledTime}
-                            status={item.status}
-                            previousHistory={item.previousHistory}
-                        />
-                    </Grid>
-                ))}
-            </Grid>
-            {/* Next Scheduled Dose */}
-            <Container sx={{ mt: 4 }}>
-                <Typography variant="h6" fontWeight="bold">Next Scheduled Dose</Typography>
-                {nextScheduledDose ? (
-                    <Card sx={{ backgroundColor: "#e3f2fd", p: 2, mt: 1 }}>
-                        <Typography variant="body1">
-                            <strong>{nextScheduledDose.medicineName}</strong> - {nextScheduledDose.dose}
-                        </Typography>
-                        <Typography variant="body2">Scheduled at: {nextScheduledDose.scheduledTime}</Typography>
-                    </Card>
-                ) : (
-                    <Typography variant="body2">No upcoming scheduled doses.</Typography>
-                )}
-            </Container>
+
+
         </Container>
     );
 };
