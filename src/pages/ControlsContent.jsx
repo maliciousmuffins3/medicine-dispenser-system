@@ -36,7 +36,6 @@ import InventoryIcon from "@mui/icons-material/Inventory";
 import {
     collection,
     doc,
-    getDoc,
     setDoc,
     deleteDoc,
     onSnapshot,
@@ -64,6 +63,7 @@ const ControlsContent = ({ app }) => {
         time: "",
         intervalType: "once",
         intervalValue: '',
+        date: null,
     });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
@@ -115,24 +115,21 @@ const ControlsContent = ({ app }) => {
             const fetchInitialData = async () => {
                 setLoading(true);
                 try {
-                    const scheduleDocRef = doc(firestoreDb, "medicines", userUid);
-                    const unsubscribeSchedule = onSnapshot(scheduleDocRef, (scheduleDocSnap) => {
-                        if (scheduleDocSnap.exists()) {
-                            const scheduleData = scheduleDocSnap.data();
-                            const schedulesArray = Object.entries(scheduleData).map(([, { medicineName, medicineDose, time, intervalType, intervalValue, date }]) => {
-                                return {
-                                    medicineName,
-                                    medicineDose,
-                                    time,
-                                    intervalType,
-                                    intervalValue,
-                                    date: date ? date.toDate() : null, // Convert Timestamp to Date
-                                };
-                            });
-                            setSchedules(schedulesArray);
-                        } else {
-                            setSchedules([]);
-                        }
+                    const scheduleCollectionRef = collection(firestoreDb, "medicines", userUid, "schedules");
+                    const unsubscribeSchedule = onSnapshot(scheduleCollectionRef, (scheduleSnapshot) => {
+                        const schedulesArray = scheduleSnapshot.docs.map(doc => {
+                            const data = doc.data();
+                            return {
+                                id: doc.id,
+                                medicineName: data.medicineName,
+                                medicineDose: data.medicineDose,
+                                time: data.time,
+                                intervalType: data.intervalType,
+                                intervalValue: data.intervalValue,
+                                date: data.date ? data.date.toDate() : null, // Convert Timestamp to Date
+                            };
+                        });
+                        setSchedules(schedulesArray);
                     });
                     addCleanup(() => unsubscribeSchedule());
 
@@ -259,15 +256,9 @@ const ControlsContent = ({ app }) => {
 
         if (newSchedule.medicineName && newSchedule.time && newSchedule.medicineDose && userUid) {
             try {
-                const scheduleDocRef = doc(firestoreDb, "medicines", userUid);
-                const scheduleDocSnap = await getDoc(scheduleDocRef);
-                let currentScheduleData = {};
+                const scheduleCollectionRef = collection(firestoreDb, "medicines", userUid, "schedules");
+                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
 
-                if (scheduleDocSnap.exists()) {
-                    currentScheduleData = scheduleDocSnap.data();
-                }
-
-                let updatedScheduleData = {};
                 const selectedTime = newSchedule.time;
                 const [hours, minutes] = selectedTime.split(':').map(Number);
                 const now = new Date();
@@ -276,31 +267,58 @@ const ControlsContent = ({ app }) => {
                 const scheduledDateTime = Timestamp.fromDate(now); // Convert Date to Timestamp
 
                 if (editIndex !== null) {
-                    const medicineKey = `med${editIndex + 1}`;
-                    updatedScheduleData = {
-                        ...currentScheduleData,
-                        [medicineKey]: {
-                            medicineName: newSchedule.medicineName,
-                            medicineDose: newSchedule.medicineDose,
-                            time: newSchedule.time,
-                            date: scheduledDateTime,
-                            intervalType: newSchedule.intervalType,
-                            intervalValue: newSchedule.intervalValue,
-                        }
-                    };
+                    const scheduleIdToUpdate = schedules[editIndex].id;
+                    const scheduleDocRef = doc(scheduleCollectionRef, scheduleIdToUpdate);
+                    await setDoc(scheduleDocRef, {
+                        medicineName: newSchedule.medicineName,
+                        medicineDose: newSchedule.medicineDose,
+                        time: newSchedule.time,
+                        date: scheduledDateTime,
+                        intervalType: newSchedule.intervalType,
+                        intervalValue: newSchedule.intervalValue,
+                    });
+
+                    // Delete old history entry and add new one
+                    const historyQuery = query(
+                        historyCollectionRef,
+                        where("medicineName", "==", schedules[editIndex].medicineName),
+                        where("dose", "==", schedules[editIndex].medicineDose),
+                        where("scheduledTime", "==", schedules[editIndex].time)
+                    );
+                    const historyDocs = await getDocs(historyQuery);
+
+                    const batch = writeBatch(firestoreDb);
+                    for (const hDoc of historyDocs.docs) {
+                        batch.delete(doc(historyCollectionRef, hDoc.id));
+                    }
+
+                    // Add new history entry with "Scheduled" status
+                    batch.set(doc(historyCollectionRef), {
+                        medicineName: newSchedule.medicineName,
+                        dose: newSchedule.medicineDose,
+                        scheduledTime: newSchedule.time,
+                        time: scheduledDateTime,
+                        status: "Scheduled",
+                    });
+                    await batch.commit();
+
                 } else {
-                    const nextMedicineKey = `med${schedules.length + 1}`;
-                    updatedScheduleData = {
-                        ...currentScheduleData,
-                        [nextMedicineKey]: {
-                            medicineName: newSchedule.medicineName,
-                            medicineDose: newSchedule.medicineDose,
-                            time: newSchedule.time,
-                            date: scheduledDateTime,
-                            intervalType: newSchedule.intervalType,
-                            intervalValue: newSchedule.intervalValue,
-                        }
-                    };
+                    await addDoc(scheduleCollectionRef, {
+                        medicineName: newSchedule.medicineName,
+                        medicineDose: newSchedule.medicineDose,
+                        time: newSchedule.time,
+                        date: scheduledDateTime,
+                        intervalType: newSchedule.intervalType,
+                        intervalValue: newSchedule.intervalValue,
+                    });
+
+                    await addDoc(historyCollectionRef, {
+                        medicineName: newSchedule.medicineName,
+                        dose: newSchedule.medicineDose,
+                        scheduledTime: newSchedule.time,
+                        time: scheduledDateTime, // Store the current time as Timestamp
+                        status: "Scheduled",
+                    });
 
                     if (!stockLevels[newSchedule.medicineName]) {
                         const newStockLevels = { ...stockLevels };
@@ -310,19 +328,7 @@ const ControlsContent = ({ app }) => {
                     }
                 }
 
-                await setDoc(scheduleDocRef, updatedScheduleData);
-
-                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
-
-                await addDoc(historyCollectionRef, {
-                    medicineName: newSchedule.medicineName,
-                    dose: newSchedule.medicineDose,
-                    scheduledTime: newSchedule.time,
-                    time: Timestamp.now(), // Store the current time as Timestamp
-                    status: editIndex !== null ? "Updated" : "Scheduled",
-                });
-
-                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '' });
+                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null });
                 setOpenScheduleDialog(false);
                 setInputErrors({});
                 setEditIndex(null);
@@ -335,31 +341,37 @@ const ControlsContent = ({ app }) => {
     const handleDeleteSchedule = async (index) => {
         if (userUid) {
             try {
-                const scheduleDocRef = doc(firestoreDb, "medicines", userUid);
-                const scheduleDocSnap = await getDoc(scheduleDocRef);
-                if (scheduleDocSnap.exists()) {
-                    const currentScheduleData = scheduleDocSnap.data();
-                    const updatedScheduleData = {};
-                    let count = 1;
-                    let deletedMedicineName = "";
+                const scheduleIdToDelete = schedules[index].id;
+                const scheduleCollectionRef = collection(firestoreDb, "medicines", userUid, "schedules");
+                const scheduleDocRef = doc(scheduleCollectionRef, scheduleIdToDelete);
+                const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
+                const deletedMedicineName = schedules[index].medicineName;
+                const deletedMedicineDose = schedules[index].medicineDose;
+                const deletedMedicineTime = schedules[index].time;
 
-                    for (const key in currentScheduleData) {
-                        if (key !== `med${index + 1}`) {
-                            updatedScheduleData[`med${count}`] = currentScheduleData[key];
-                            count++;
-                        } else {
-                            deletedMedicineName = currentScheduleData[key].medicineName;
-                        }
-                    }
-                    await setDoc(scheduleDocRef, updatedScheduleData);
+                // Delete the schedule
+                await deleteDoc(scheduleDocRef);
 
-                    if (deletedMedicineName) {
-                        const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels/${deletedMedicineName}`);
-                        await remove(stockLevelRef);
-                        const newStockLevels = { ...stockLevels };
-                        delete newStockLevels[deletedMedicineName];
-                        setStockLevels(newStockLevels);
-                    }
+                // Delete related history entries
+                const historyQuery = query(historyCollectionRef,
+                    where("medicineName", "==", deletedMedicineName),
+                    where("dose", "==", deletedMedicineDose),
+                    where("scheduledTime", "==", deletedMedicineTime)
+                );
+                const historyDocs = await getDocs(historyQuery);
+                const batch = writeBatch(firestoreDb);
+                historyDocs.forEach(hDoc => {
+                    batch.delete(doc(historyCollectionRef, hDoc.id));
+                });
+                await batch.commit();
+
+                // Remove stock level
+                if (deletedMedicineName) {
+                    const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels/${deletedMedicineName}`);
+                    await remove(stockLevelRef);
+                    const newStockLevels = { ...stockLevels };
+                    delete newStockLevels[deletedMedicineName];
+                    setStockLevels(newStockLevels);
                 }
             } catch (error) {
                 console.error("Error deleting schedule:", error);
@@ -389,6 +401,7 @@ const ControlsContent = ({ app }) => {
             time: scheduleToEdit.time,
             intervalType: scheduleToEdit.intervalType,
             intervalValue: scheduleToEdit.intervalValue,
+            date: scheduleToEdit.date,
         });
         setEditIndex(index);
         setOpenScheduleDialog(true);
@@ -481,7 +494,7 @@ const ControlsContent = ({ app }) => {
                         )}
                         <Button startIcon={<AddIcon />} variant="outlined" onClick={() => {
                             setEditIndex(null);
-                            setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '' });
+                            setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null });
                             setOpenScheduleDialog(true);
                         }}>
                             Add Schedule
@@ -604,13 +617,20 @@ const ControlsContent = ({ app }) => {
                             id="interval-type"
                             value={newSchedule.intervalType}
                             label="Interval"
-                            onChange={(e) =>
+                            onChange={(e) => {
+                                const intervalType = e.target.value;
+                                let intervalValue = 0;
+                                if (intervalType === 'hourly') {
+                                    intervalValue = 1;
+                                } else if (intervalType === 'once') {
+                                    intervalValue = 0
+                                }
                                 setNewSchedule({
                                     ...newSchedule,
-                                    intervalType: e.target.value,
-                                    intervalValue: '',
-                                })
-                            }
+                                    intervalType: intervalType,
+                                    intervalValue: intervalValue,
+                                });
+                            }}
 
                         >
                             <MenuItem value="once">Once</MenuItem>
@@ -661,3 +681,4 @@ const ControlsContent = ({ app }) => {
 };
 
 export default ControlsContent;
+

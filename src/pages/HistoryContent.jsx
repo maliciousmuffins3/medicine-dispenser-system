@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Typography, Card, CardContent, Grid, Divider, List, ListItem, ListItemText, Box, Button } from "@mui/material";
-import { doc, collection, onSnapshot, orderBy, query, Timestamp, updateDoc, getDocs, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase/firebaseConfig';
+import { Container, Typography, Card, CardContent, Grid, Divider, List, ListItem, ListItemText, Box } from "@mui/material";
+import { doc, collection, onSnapshot, Timestamp } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { format } from 'date-fns';
+import { db } from '../firebase/firebaseConfig'; // Import the firebase config
 
 // Utility function
 export const calculateNextInterval = (scheduledTime, intervalType, intervalValue) => {
@@ -43,94 +43,7 @@ export const calculateNextInterval = (scheduledTime, intervalType, intervalValue
 
 
 
-const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistory, userUid, medicationId, onUpdateStatus }) => {
-    const [isUpdating, setIsUpdating] = useState(false);
-
-    const handleTaken = async () => {
-        if (userUid && medicationId) {
-            setIsUpdating(true);
-            try {
-                const medicationDocRef = doc(db, 'history', userUid, 'medications', medicationId);
-                const medicationDocSnap = await getDoc(medicationDocRef);
-
-                if (medicationDocSnap.exists()) {
-                    const medicationData = medicationDocSnap.data();
-                    const intervalType = medicationData.intervalType;
-                    const intervalValue = medicationData.intervalValue;
-                    const currentScheduledTime = medicationData.scheduledTime;
-
-                    await onUpdateStatus(userUid, medicationId, 'Taken');
-
-                    if (intervalType && intervalValue) {
-                        const nextScheduledTime = calculateNextInterval(currentScheduledTime, intervalType, intervalValue);
-
-                        if (nextScheduledTime) {
-                            const newMedicationRef = doc(collection(db, 'history', userUid, 'medications'));
-                            await setDoc(newMedicationRef, {
-                                medicineName: medicineName,
-                                dose: dose,
-                                scheduledTime: nextScheduledTime,
-                                status: 'Scheduled',
-                                intervalType: intervalType,
-                                intervalValue: intervalValue,
-                                rawScheduledTime: nextScheduledTime,
-                            });
-                            console.log("Next dose scheduled for:", nextScheduledTime);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error("Failed to update status to Taken:", error);
-            } finally {
-                setIsUpdating(false);
-            }
-        } else {
-            console.warn("userUid or medicationId is missing, cannot update status");
-        }
-    };
-
-    const handleMissed = async () => {
-        if (userUid && medicationId) {
-            setIsUpdating(true);
-            try {
-                const medicationDocRef = doc(db, 'history', userUid, 'medications', medicationId);
-                const medicationDocSnap = await getDoc(medicationDocRef);
-
-                if (medicationDocSnap.exists()) {
-                    const medicationData = medicationDocSnap.data();
-                    const intervalType = medicationData.intervalType;
-                    const intervalValue = medicationData.intervalValue;
-                    const currentScheduledTime = medicationData.scheduledTime;
-
-                    await onUpdateStatus(userUid, medicationId, 'Missed');
-
-                    if (intervalType && intervalValue) {
-                        const nextScheduledTime = calculateNextInterval(currentScheduledTime, intervalType, intervalValue);
-
-                        if (nextScheduledTime) {
-                            const newMedicationRef = doc(collection(db, 'history', userUid, 'medications'));
-                            await setDoc(newMedicationRef, {
-                                medicineName: medicineName,
-                                dose: dose,
-                                scheduledTime: nextScheduledTime,
-                                status: 'Scheduled',
-                                intervalType: intervalType,
-                                intervalValue: intervalValue,
-                                rawScheduledTime: nextScheduledTime,
-                            });
-                            console.log("Next dose scheduled for:", nextScheduledTime);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error("Failed to update status to Missed:", error);
-            } finally {
-                setIsUpdating(false);
-            }
-        } else {
-            console.warn("userUid or medicationId is missing, cannot update status");
-        }
-    }
+const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistory }) => {
 
     return (
         <Box sx={{ mb: 3, borderRadius: 2, boxShadow: 3 }}>
@@ -152,29 +65,6 @@ const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistor
                     }>
                         Status: {status}
                     </Typography>
-                    {/* Action Buttons */}
-                    {status !== 'Taken' && (
-                        <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                size="small"
-                                onClick={handleTaken}
-                                disabled={status === "Taken" || isUpdating}
-                            >
-                                {isUpdating ? 'Updating...' : 'Taken'}
-                            </Button>
-                            <Button
-                                variant="outlined"
-                                color="error"
-                                size="small"
-                                onClick={handleMissed}
-                                disabled={status === "Missed" || isUpdating}
-                            >
-                                {isUpdating ? 'Updating...' : 'Missed'}
-                            </Button>
-                        </Box>
-                    )}
                 </CardContent>
             </Card>
 
@@ -187,7 +77,7 @@ const HistoryCard = ({ medicineName, dose, scheduledTime, status, previousHistor
                     <Divider sx={{ mb: 1 }} />
                     <List sx={{ maxHeight: 150, overflow: "auto" }}>
                         {previousHistory.map((record, index) => {
-                             const recordTime = record.time instanceof Timestamp
+                            const recordTime = record.time instanceof Timestamp
                                 ? format(record.time.toDate(), 'PPPppp') // Format the timestamp
                                 : record.time;
                             return (
@@ -220,6 +110,7 @@ const HistoryContent = () => {
     const [takenHistory, setTakenHistory] = useState([]); // New state for "Taken" history
     const [missedHistory, setMissedHistory] = useState([]); // New state for "Missed" history
     const [currentDate, setCurrentDate] = useState('');
+
 
     useEffect(() => {
         const auth = getAuth();
@@ -274,6 +165,7 @@ const HistoryContent = () => {
                         userUid: userUid,
                         medicationId: doc.id,
                         takenTime: data.takenTime, // Store takenTime
+
                     };
 
                     if (data.status === 'Taken') {
@@ -338,6 +230,7 @@ const HistoryContent = () => {
                 setTakenHistory(fetchedTakenHistory);
                 setMissedHistory(fetchedMissedHistory);
 
+
                 const nextDose = finalHistoryData.find(item => item.status !== 'Taken');
                 setNextScheduledDose(nextDose || null);
 
@@ -363,18 +256,7 @@ const HistoryContent = () => {
         }
     }, [currentUser]);
 
-    const handleUpdateStatus = async (userUid, medicationId, newStatus) => {
-        try {
-            const medicationDocRef = doc(db, 'history', userUid, 'medications', medicationId);
-            await updateDoc(medicationDocRef, {
-                status: newStatus,
-                takenTime: newStatus === 'Taken' ? Timestamp.now() : null, // Store taken time
-            });
-            console.log(`Medication status updated to ${newStatus} successfully.`);
-        } catch (error) {
-            console.error(`Error updating medication status to ${newStatus}:`, error);
-        }
-    };
+
 
     if (loading) {
         return <Container><Typography>Loading medication history...</Typography></Container>;
@@ -389,14 +271,13 @@ const HistoryContent = () => {
     }
 
     return (
-        <Container maxWidth="md" sx={{ mt: 4 , mb: 12}}>
+        <Container maxWidth="md" sx={{ mt: 4, mb: 12 }}>
             <Typography variant="h4" fontWeight="bold" align="center" gutterBottom>
                 Medication History
             </Typography>
             <Typography variant="h6" align="center" gutterBottom>
                 Date: {currentDate}
             </Typography>
-
 
             {/* Missed Medications Card */}
             {missedHistory.length > 0 && (
@@ -445,7 +326,6 @@ const HistoryContent = () => {
                 </Card>
             )}
 
-
             <Grid container spacing={2}>
                 {historyData.map((item) => (
                     <Grid item xs={12} sm={6} md={4} key={item.id}>
@@ -455,9 +335,6 @@ const HistoryContent = () => {
                             scheduledTime={item.scheduledTime}
                             status={item.status}
                             previousHistory={item.previousHistory}
-                            userUid={item.userUid}
-                            medicationId={item.medicationId}
-                            onUpdateStatus={handleUpdateStatus}
                         />
                     </Grid>
                 ))}
