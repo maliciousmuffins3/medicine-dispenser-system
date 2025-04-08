@@ -46,6 +46,7 @@ import {
     writeBatch,
     getDocs,
     Timestamp, // Import Timestamp
+    getDoc
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getDatabase, ref, onValue, set, update, off, remove } from "firebase/database"; // Import remove
@@ -137,21 +138,10 @@ const ControlsContent = ({ app }) => {
                         if (configData) {
                             setIsLocked(configData.isLocked || false);
                             setNotifyCaregiver(configData.notifyCaregiver);
-                            setStockLevels(configData.stockLevels || {});
                             setIsDispensing(configData.isDispensing || false);
-                            let hasLowStock = false;
-                            for (const medicineName in configData.stockLevels) {
-                                if (configData.stockLevels[medicineName] <= 5) {
-                                    hasLowStock = true;
-                                    break;
-                                }
-                            }
-                            setLowStockAlert(hasLowStock);
                         } else {
                             setIsLocked(false);
                             setNotifyCaregiver(true);
-                            setStockLevels({});
-                            setLowStockAlert(false);
                             setIsDispensing(false);
                         }
                     });
@@ -162,6 +152,28 @@ const ControlsContent = ({ app }) => {
                             console.error("Error detaching config listener", e);
                         }
                     });
+
+                    // Set up a listener for changes to the stockLevels in Firestore
+                    const stocksDocRef = doc(firestoreDb, "stocks", userUid); // Changed collection name
+                    const unsubscribeStockLevels = onSnapshot(stocksDocRef, (docSnapshot) => {
+                        const stocksData = docSnapshot.data();
+                        if (stocksData && stocksData.stockLevels) {
+                            setStockLevels(stocksData.stockLevels);
+                            // Check for low stock and set alert
+                            let hasLowStock = false;
+                            for (const medicineName in stocksData.stockLevels) {
+                                if (stocksData.stockLevels[medicineName] <= 5) {
+                                    hasLowStock = true;
+                                    break;
+                                }
+                            }
+                            setLowStockAlert(hasLowStock);
+                        } else {
+                            setStockLevels({});
+                            setLowStockAlert(false);
+                        }
+                    });
+                    addCleanup(() => unsubscribeStockLevels());
 
                     setLoading(false);
                 } catch (error) {
@@ -180,7 +192,7 @@ const ControlsContent = ({ app }) => {
     const updateFirestoreData = async (collectionName, docId, data) => {
         try {
             const docRef = doc(firestoreDb, collectionName, docId);
-            await setDoc(docRef, data);
+            await setDoc(docRef, data, { merge: true }); // Use merge to preserve other fields
         } catch (error) {
             console.error(`Error updating ${collectionName}:`, error);
         }
@@ -237,12 +249,15 @@ const ControlsContent = ({ app }) => {
             hasErrors = true;
         }
 
-        if (schedules.some((schedule, index) =>
+        // Check for duplicate medicine names (case-insensitive)
+        const lowerCaseMedicineName = newSchedule.medicineName.toLowerCase();
+        const duplicateMedicine = schedules.some((schedule, index) =>
             index !== editIndex &&
-            schedule.medicineName === newSchedule.medicineName &&
-            schedule.medicineDose === newSchedule.medicineDose
-        )) {
-            newErrors.duplicate = "A schedule with this medicine name and dose already exists";
+            schedule.medicineName.toLowerCase() === lowerCaseMedicineName
+        );
+
+        if (duplicateMedicine) {
+            newErrors.duplicateName = "A medicine with this name already exists";
             hasErrors = true;
         }
 
@@ -322,7 +337,7 @@ const ControlsContent = ({ app }) => {
                         const newStockLevels = { ...stockLevels };
                         newStockLevels[newSchedule.medicineName] = 0;
                         setStockLevels(newStockLevels);
-                        await updateRealtimeData(`config/${userUid}/stockLevels`, newStockLevels);
+                        await updateFirestoreData("stocks", userUid, { stockLevels: newStockLevels }); // Changed collection name
                     }
                 }
 
@@ -363,13 +378,15 @@ const ControlsContent = ({ app }) => {
                 });
                 await batch.commit();
 
-                // Remove stock level
+                // Remove stock level from Firestore
                 if (deletedMedicineName) {
-                    const stockLevelRef = ref(realtimeDb, `config/${userUid}/stockLevels/${deletedMedicineName}`);
-                    await remove(stockLevelRef);
-                    const newStockLevels = { ...stockLevels };
-                    delete newStockLevels[deletedMedicineName];
-                    setStockLevels(newStockLevels);
+                    const currentStocksDoc = await getDoc(doc(firestoreDb, "stocks", userUid)); // Changed collection name
+                    const currentStocksData = currentStocksDoc.data();
+                    const currentStockLevels = currentStocksData?.stockLevels || {};
+                    const updatedStockLevels = { ...currentStockLevels };
+                    delete updatedStockLevels[deletedMedicineName];
+                    await updateFirestoreData("stocks", userUid, { stockLevels: updatedStockLevels }); // Changed collection name
+                    setStockLevels(updatedStockLevels);
                 }
             } catch (error) {
                 console.error("Error deleting schedule:", error);
@@ -387,7 +404,16 @@ const ControlsContent = ({ app }) => {
 
     const handleUpdateStock = async (medicineName, newStock) => {
         if (userUid) {
-            await updateRealtimeData(`config/${userUid}/stockLevels/${medicineName}`, newStock);
+            const stocksDocRef = doc(firestoreDb, "stocks", userUid); // Changed collection name
+            const stocksDoc = await getDoc(stocksDocRef);
+            const currentStockLevels = stocksDoc.data()?.stockLevels || {};
+
+            const updatedStockLevels = {
+                ...currentStockLevels,
+                [medicineName]: newStock,
+            };
+
+            await updateFirestoreData("stocks", userUid, { stockLevels: updatedStockLevels }); // Changed collection name
         }
     };
 
@@ -584,8 +610,8 @@ const ControlsContent = ({ app }) => {
                         value={newSchedule.medicineName}
                         onChange={(e) => setNewSchedule({ ...newSchedule, medicineName: e.target.value })}
                         sx={{ mt: 2 }}
-                        error={!!inputErrors.medicineName}
-                        helperText={inputErrors.medicineName}
+                        error={!!inputErrors.medicineName || !!inputErrors.duplicateName}
+                        helperText={inputErrors.medicineName || inputErrors.duplicateName}
                     />
                     <TextField
                         fullWidth
@@ -608,7 +634,7 @@ const ControlsContent = ({ app }) => {
                         helperText={inputErrors.time}
                     />
 
-                    <FormControl fullWidth sx={{ mt: 2 }} error={!!inputErrors.duplicate || !!inputErrors.maxLimit}>
+                    <FormControl fullWidth sx={{ mt: 2 }} error={!!inputErrors.maxLimit}>
                         <InputLabel id="interval-type-label">Interval</InputLabel>
                         <Select
                             labelId="interval-type-label"
@@ -635,8 +661,8 @@ const ControlsContent = ({ app }) => {
                             <MenuItem value="hourly">Every Hour</MenuItem>
                             <MenuItem value="interval">Every...</MenuItem>
                         </Select>
-                        {(inputErrors.duplicate || inputErrors.maxLimit) && (
-                            <FormHelperText>{inputErrors.duplicate || inputErrors.maxLimit}</FormHelperText>
+                        {inputErrors.maxLimit && (
+                            <FormHelperText>{inputErrors.maxLimit}</FormHelperText>
                         )}
                     </FormControl>
 
