@@ -153,16 +153,16 @@ const ControlsContent = ({ app }) => {
                         }
                     });
 
-                    // Set up a listener for changes to the stockLevels in Firestore
-                    const stocksDocRef = doc(firestoreDb, "stocks", userUid); // Changed collection name
-                    const unsubscribeStockLevels = onSnapshot(stocksDocRef, (docSnapshot) => {
-                        const stocksData = docSnapshot.data();
-                        if (stocksData && stocksData.stockLevels) {
-                            setStockLevels(stocksData.stockLevels);
+                    // Set up a listener for changes to the stockLevels in Realtime Database
+                    const stocksRef = ref(realtimeDb, `stocks/${userUid}`);
+                    const unsubscribeStockLevels = onValue(stocksRef, (snapshot) => {
+                        const stocksData = snapshot.val();
+                        if (stocksData) {
+                            setStockLevels(stocksData);
                             // Check for low stock and set alert
                             let hasLowStock = false;
-                            for (const medicineName in stocksData.stockLevels) {
-                                if (stocksData.stockLevels[medicineName] <= 5) {
+                            for (const medicineName in stocksData) {
+                                if (stocksData[medicineName] <= 5) {
                                     hasLowStock = true;
                                     break;
                                 }
@@ -173,7 +173,13 @@ const ControlsContent = ({ app }) => {
                             setLowStockAlert(false);
                         }
                     });
-                    addCleanup(() => unsubscribeStockLevels());
+                    addCleanup(() => {
+                        try {
+                            off(stocksRef, 'value', unsubscribeStockLevels);
+                        } catch (e) {
+                            console.error("Error detaching stocks listener", e);
+                        }
+                    });
 
                     setLoading(false);
                 } catch (error) {
@@ -337,7 +343,7 @@ const ControlsContent = ({ app }) => {
                         const newStockLevels = { ...stockLevels };
                         newStockLevels[newSchedule.medicineName] = 0;
                         setStockLevels(newStockLevels);
-                        await updateFirestoreData("stocks", userUid, { stockLevels: newStockLevels }); // Changed collection name
+                        await updateRealtimeData(`stocks/${userUid}`, newStockLevels);
                     }
                 }
 
@@ -378,15 +384,13 @@ const ControlsContent = ({ app }) => {
                 });
                 await batch.commit();
 
-                // Remove stock level from Firestore
+                // Remove stock level from Realtime Database
                 if (deletedMedicineName) {
-                    const currentStocksDoc = await getDoc(doc(firestoreDb, "stocks", userUid)); // Changed collection name
-                    const currentStocksData = currentStocksDoc.data();
-                    const currentStockLevels = currentStocksData?.stockLevels || {};
-                    const updatedStockLevels = { ...currentStockLevels };
-                    delete updatedStockLevels[deletedMedicineName];
-                    await updateFirestoreData("stocks", userUid, { stockLevels: updatedStockLevels }); // Changed collection name
-                    setStockLevels(updatedStockLevels);
+                    const stocksRef = ref(realtimeDb, `stocks/${userUid}/${deletedMedicineName}`);
+                    await remove(stocksRef);
+                    const currentStocks = { ...stockLevels };
+                    delete currentStocks[deletedMedicineName];
+                    setStockLevels(currentStocks);
                 }
             } catch (error) {
                 console.error("Error deleting schedule:", error);
@@ -404,16 +408,12 @@ const ControlsContent = ({ app }) => {
 
     const handleUpdateStock = async (medicineName, newStock) => {
         if (userUid) {
-            const stocksDocRef = doc(firestoreDb, "stocks", userUid); // Changed collection name
-            const stocksDoc = await getDoc(stocksDocRef);
-            const currentStockLevels = stocksDoc.data()?.stockLevels || {};
-
-            const updatedStockLevels = {
-                ...currentStockLevels,
-                [medicineName]: newStock,
-            };
-
-            await updateFirestoreData("stocks", userUid, { stockLevels: updatedStockLevels }); // Changed collection name
+            const stocksRef = ref(realtimeDb, `stocks/${userUid}/${medicineName}`);
+            await set(stocksRef, newStock);
+            setStockLevels(prevLevels => ({
+                ...prevLevels,
+                [medicineName]: newStock
+            }));
         }
     };
 
