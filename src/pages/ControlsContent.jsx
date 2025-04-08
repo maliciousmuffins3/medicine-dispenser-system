@@ -93,6 +93,32 @@ const ControlsContent = ({ app }) => {
         cleanupRefs.current = [];
     }, []);
 
+    async function deleteNextSchedule(UID) {
+        if (!UID) {
+          console.error("UID is required to delete next schedule.");
+          return;
+        }
+      
+        try {
+          const response = await fetch(`/delete-next-schedule?UID=${UID}`, {
+            method: 'DELETE',
+          });
+      
+          const data = await response.json();
+      
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to delete schedule');
+          }
+      
+          console.log("Deleted:", data.message);
+          return data; // Optional: return for further handling
+        } catch (error) {
+          console.error("Error deleting next schedule:", error.message);
+          throw error;
+        }
+      }
+      
+
     useEffect(() => {
         const unsubscribeAuth = auth.onAuthStateChanged((user) => {
             if (user) {
@@ -278,12 +304,13 @@ const ControlsContent = ({ app }) => {
                 const scheduleCollectionRef = collection(firestoreDb, "medicines", userUid, "schedules");
                 const historyCollectionRef = collection(firestoreDb, "history", userUid, "medications");
 
-                const selectedTime = newSchedule.time;
-                const [hours, minutes] = selectedTime.split(':').map(Number);
+                // Get current date
                 const now = new Date();
-                now.setHours(hours);
-                now.setMinutes(minutes);
-                const scheduledDateTime = Timestamp.fromDate(now);
+                const [hours, minutes] = newSchedule.time.split(':').map(Number);
+
+                // Combine current date with selected time
+                const scheduledDateTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+                const scheduledTimestamp = Timestamp.fromDate(scheduledDateTime); // Convert to Timestamp
 
                 if (editIndex !== null) {
                     const scheduleIdToUpdate = schedules[editIndex].id;
@@ -292,7 +319,7 @@ const ControlsContent = ({ app }) => {
                         medicineName: newSchedule.medicineName,
                         medicineDose: newSchedule.medicineDose,
                         time: newSchedule.time,
-                        date: scheduledDateTime,
+                        date: scheduledTimestamp, // Store as Timestamp
                         intervalType: newSchedule.intervalType,
                         intervalValue: newSchedule.intervalValue,
                     });
@@ -316,7 +343,7 @@ const ControlsContent = ({ app }) => {
                         medicineName: newSchedule.medicineName,
                         dose: newSchedule.medicineDose,
                         scheduledTime: newSchedule.time,
-                        time: scheduledDateTime,
+                        time: scheduledTimestamp, // Store as Timestamp
                         status: "Scheduled",
                     });
                     await batch.commit();
@@ -326,7 +353,7 @@ const ControlsContent = ({ app }) => {
                         medicineName: newSchedule.medicineName,
                         medicineDose: newSchedule.medicineDose,
                         time: newSchedule.time,
-                        date: scheduledDateTime,
+                        date: scheduledTimestamp, // Store the scheduled time
                         intervalType: newSchedule.intervalType,
                         intervalValue: newSchedule.intervalValue,
                     });
@@ -335,7 +362,7 @@ const ControlsContent = ({ app }) => {
                         medicineName: newSchedule.medicineName,
                         dose: newSchedule.medicineDose,
                         scheduledTime: newSchedule.time,
-                        time: scheduledDateTime, // Store the current time as Timestamp
+                        time: scheduledTimestamp, // Store the scheduled time as Timestamp
                         status: "Scheduled",
                     });
 
@@ -358,6 +385,8 @@ const ControlsContent = ({ app }) => {
     };
 
     const handleDeleteSchedule = async (index) => {
+
+        deleteNextSchedule(userUid);
         if (userUid) {
             try {
                 const scheduleIdToDelete = schedules[index].id;
@@ -485,7 +514,7 @@ const ControlsContent = ({ app }) => {
                             <List>
                                 {schedules.map((schedule, index) => {
                                     const formattedDate = schedule.date
-                                        ? format(schedule.date, 'PPP')
+                                        ? format(schedule.date, 'PPPpp') // Format the date and time
                                         : 'No Date';
                                     return (
                                         <ListItem
@@ -509,7 +538,7 @@ const ControlsContent = ({ app }) => {
                                         >
                                             <ListItemText
                                                 primary={`${schedule.medicineName} - ${schedule.medicineDose}`}
-                                                secondary={`Scheduled at ${schedule.time} on ${formattedDate} (${getIntervalDisplay(schedule.intervalType, schedule.intervalValue)})`}
+                                                secondary={`Scheduled at ${formattedDate} (${getIntervalDisplay(schedule.intervalType, schedule.intervalValue)})`}
                                             />
                                         </ListItem>
                                     );
