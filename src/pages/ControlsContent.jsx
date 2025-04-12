@@ -64,6 +64,7 @@ const ControlsContent = ({ app }) => {
         intervalType: "once",
         intervalValue: '',
         date: null,
+        slotNumber: null, // Added slotNumber
     });
     const [lowStockAlert, setLowStockAlert] = useState(false);
     const [notifyCaregiver, setNotifyCaregiver] = useState(true);
@@ -73,6 +74,11 @@ const ControlsContent = ({ app }) => {
     const [isDispensing, setIsDispensing] = useState(false);
     const [inputErrors, setInputErrors] = useState({});
     const [editIndex, setEditIndex] = useState(null);
+    const [availableSlots, setAvailableSlots] = useState(() => {
+        const uniqueSlots = Array.from(new Set(Array.from({ length: 5 }, (_, i) => i + 1)));
+        return uniqueSlots;
+    }); // Initialize unique slots 1-5
+
 
     const auth = getAuth(app);
     const realtimeDb = getDatabase(app);
@@ -95,29 +101,29 @@ const ControlsContent = ({ app }) => {
 
     async function deleteNextSchedule(UID) {
         if (!UID) {
-          console.error("UID is required to delete next schedule.");
-          return;
+            console.error("UID is required to delete next schedule.");
+            return;
         }
-      
+
         try {
-          const response = await fetch(`/delete-next-schedule?UID=${UID}`, {
-            method: 'DELETE',
-          });
-      
-          const data = await response.json();
-      
-          if (!response.ok) {
-            throw new Error(data.error || 'Failed to delete schedule');
-          }
-      
-          console.log("Deleted:", data.message);
-          return data; // Optional: return for further handling
+            const response = await fetch(`/delete-next-schedule?UID=${UID}`, {
+                method: 'DELETE',
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to delete schedule');
+            }
+
+            console.log("Deleted:", data.message);
+            return data; // Optional: return for further handling
         } catch (error) {
-          console.error("Error deleting next schedule:", error.message);
-          throw error;
+            console.error("Error deleting next schedule:", error.message);
+            throw error;
         }
-      }
-      
+    }
+
 
     useEffect(() => {
         const unsubscribeAuth = auth.onAuthStateChanged((user) => {
@@ -152,8 +158,11 @@ const ControlsContent = ({ app }) => {
                                 intervalType: data.intervalType,
                                 intervalValue: data.intervalValue,
                                 date: data.date ? data.date.toDate() : null, // Convert Timestamp to Date
+                                slotNumber: data.slotNumber, // Get slotNumber
                             };
                         });
+                        // Sort schedules by slotNumber
+                        schedulesArray.sort((a, b) => (a.slotNumber || 0) - (b.slotNumber || 0));
                         setSchedules(schedulesArray);
                     });
                     addCleanup(() => unsubscribeSchedule());
@@ -221,6 +230,12 @@ const ControlsContent = ({ app }) => {
         };
     }, [firestoreDb, realtimeDb, userUid, addCleanup, runCleanup]);
 
+    useEffect(() => {
+        // Update available slots whenever schedules change
+        const occupiedSlots = schedules.map(schedule => schedule.slotNumber).filter(n => n);  // Filter out nulls
+        setAvailableSlots(Array.from({ length: 5 }, (_, i) => i + 1).filter(slot => !occupiedSlots.includes(slot)));
+    }, [schedules]);
+
     const updateFirestoreData = async (collectionName, docId, data) => {
         try {
             const docRef = doc(firestoreDb, collectionName, docId);
@@ -275,6 +290,23 @@ const ControlsContent = ({ app }) => {
             newErrors.time = "Time is required";
             hasErrors = true;
         }
+        if (!newSchedule.slotNumber) {
+            newErrors.slotNumber = "Slot Number is required";
+            hasErrors = true;
+        } else if (newSchedule.slotNumber < 1 || newSchedule.slotNumber > 5) {
+            newErrors.slotNumber = "Slot Number must be between 1 and 5";
+            hasErrors = true;
+        }
+
+        // Check for duplicate slot numbers
+         const duplicateSlot = schedules.some(
+            (schedule, index) =>
+                index !== editIndex && schedule.slotNumber === newSchedule.slotNumber
+        );
+        if (duplicateSlot) {
+            newErrors.duplicateSlot = "A medicine is already assigned to this slot";
+            hasErrors = true;
+        }
 
         if (schedules.length >= 5 && editIndex === null) {
             newErrors.maxLimit = "Maximum 5 medicines allowed.";
@@ -322,6 +354,7 @@ const ControlsContent = ({ app }) => {
                         date: scheduledTimestamp, // Store as Timestamp
                         intervalType: newSchedule.intervalType,
                         intervalValue: newSchedule.intervalValue,
+                        slotNumber: newSchedule.slotNumber, // Store slotNumber
                     });
 
                     // Delete old history entry and add new one
@@ -348,6 +381,12 @@ const ControlsContent = ({ app }) => {
                     });
                     await batch.commit();
 
+                    // Update available slots
+                    const updatedSchedules = [...schedules];
+                    updatedSchedules[editIndex] = { ...newSchedule, id: scheduleIdToUpdate }; //keep id
+                    const occupiedSlots = updatedSchedules.map(schedule => schedule.slotNumber).filter(n => n);
+                    setAvailableSlots(Array.from({ length: 5 }, (_, i) => i + 1).filter(slot => !occupiedSlots.includes(slot)));
+
                 } else {
                     await addDoc(scheduleCollectionRef, {
                         medicineName: newSchedule.medicineName,
@@ -356,6 +395,7 @@ const ControlsContent = ({ app }) => {
                         date: scheduledTimestamp, // Store the scheduled time
                         intervalType: newSchedule.intervalType,
                         intervalValue: newSchedule.intervalValue,
+                        slotNumber: newSchedule.slotNumber, // Store slotNumber
                     });
 
                     await addDoc(historyCollectionRef, {
@@ -372,9 +412,11 @@ const ControlsContent = ({ app }) => {
                         setStockLevels(newStockLevels);
                         await updateRealtimeData(`stocks/${userUid}`, newStockLevels);
                     }
+                    // Update available slots
+                    setAvailableSlots(prevSlots => prevSlots.filter(slot => slot !== newSchedule.slotNumber));
                 }
 
-                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null });
+                setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null, slotNumber: null });
                 setOpenScheduleDialog(false);
                 setInputErrors({});
                 setEditIndex(null);
@@ -385,7 +427,6 @@ const ControlsContent = ({ app }) => {
     };
 
     const handleDeleteSchedule = async (index) => {
-
         deleteNextSchedule(userUid);
         if (userUid) {
             try {
@@ -396,6 +437,8 @@ const ControlsContent = ({ app }) => {
                 const deletedMedicineName = schedules[index].medicineName;
                 const deletedMedicineDose = schedules[index].medicineDose;
                 const deletedMedicineTime = schedules[index].time;
+                const deletedSlotNumber = schedules[index].slotNumber;
+
 
                 // Delete the schedule
                 await deleteDoc(scheduleDocRef);
@@ -421,6 +464,9 @@ const ControlsContent = ({ app }) => {
                     delete currentStocks[deletedMedicineName];
                     setStockLevels(currentStocks);
                 }
+                // Update available slots
+                setAvailableSlots(prevSlots => [...prevSlots, deletedSlotNumber].sort((a, b) => a - b));
+
             } catch (error) {
                 console.error("Error deleting schedule:", error);
             }
@@ -455,6 +501,7 @@ const ControlsContent = ({ app }) => {
             intervalType: scheduleToEdit.intervalType,
             intervalValue: scheduleToEdit.intervalValue,
             date: scheduleToEdit.date,
+            slotNumber: scheduleToEdit.slotNumber, // Set slotNumber for editing
         });
         setEditIndex(index);
         setOpenScheduleDialog(true);
@@ -537,7 +584,7 @@ const ControlsContent = ({ app }) => {
                                             }
                                         >
                                             <ListItemText
-                                                primary={`${schedule.medicineName} - ${schedule.medicineDose}`}
+                                                primary={`${schedule.medicineName} - ${schedule.medicineDose} (Slot: ${schedule.slotNumber || 'N/A'})`}
                                                 secondary={`Scheduled at ${formattedDate} (${getIntervalDisplay(schedule.intervalType, schedule.intervalValue)})`}
                                             />
                                         </ListItem>
@@ -547,7 +594,7 @@ const ControlsContent = ({ app }) => {
                         )}
                         <Button startIcon={<AddIcon />} variant="outlined" onClick={() => {
                             setEditIndex(null);
-                            setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null });
+                            setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null, slotNumber: null });
                             setOpenScheduleDialog(true);
                         }}>
                             Add Schedule
@@ -647,7 +694,7 @@ const ControlsContent = ({ app }) => {
                         label="Medicine Dose"
                         value={newSchedule.medicineDose}
                         onChange={(e) => setNewSchedule({ ...newSchedule, medicineDose: e.target.value })}
-                        sx={{ mt: 2 }}
+sx={{ mt: 2 }}
                         error={!!inputErrors.medicineDose}
                         helperText={inputErrors.medicineDose}
                     />
@@ -717,6 +764,31 @@ const ControlsContent = ({ app }) => {
                             }}
                         />
                     )}
+                    <FormControl fullWidth sx={{ mt: 2 }} error={!!inputErrors.slotNumber}>
+                        <InputLabel id="slot-number-label">Slot Number (1-5)</InputLabel>
+                        <Select
+                            labelId="slot-number-label"
+                            id="slot-number"
+                            value={newSchedule.slotNumber || ''}
+                            label="Slot Number (1-5)"
+                            onChange={(e) => {
+                                const numValue = parseInt(e.target.value, 10);
+                                if (!isNaN(numValue) || e.target.value === '') {
+                                    setNewSchedule({
+                                        ...newSchedule,
+                                        slotNumber: e.target.value === '' ? null : numValue,
+                                    });
+                                }
+                            }}
+                        >
+                            {availableSlots.map(slot => (
+                                <MenuItem key={slot} value={slot}>{slot}</MenuItem>
+                            ))}
+                        </Select>
+                        {inputErrors.slotNumber && (
+                            <FormHelperText>{inputErrors.slotNumber}</FormHelperText>
+                        )}
+                    </FormControl>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => {
@@ -724,7 +796,7 @@ const ControlsContent = ({ app }) => {
                         setInputErrors({});
                         setEditIndex(null);
                     }}>Cancel</Button>
-                    <Button variant="contained" color="primary" onClick={handleAddSchedule}>
+                    <Button variant="contained" color="primary" onClick={handleAddSchedule} disabled={availableSlots.length === 0 && editIndex === null}>
                         {editIndex !== null ? "Update" : "Add"}
                     </Button>
                 </DialogActions>
