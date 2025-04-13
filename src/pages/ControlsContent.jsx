@@ -75,9 +75,8 @@ const ControlsContent = ({ app }) => {
     const [inputErrors, setInputErrors] = useState({});
     const [editIndex, setEditIndex] = useState(null);
     const [availableSlots, setAvailableSlots] = useState(() => {
-        const uniqueSlots = Array.from(new Set(Array.from({ length: 5 }, (_, i) => i + 1)));
-        return uniqueSlots;
-    }); // Initialize unique slots 1-5
+        return Array.from({ length: 5 }, (_, i) => i + 1); // Initialize slots 1-5 without duplication
+    });
 
 
     const auth = getAuth(app);
@@ -299,7 +298,7 @@ const ControlsContent = ({ app }) => {
         }
 
         // Check for duplicate slot numbers
-         const duplicateSlot = schedules.some(
+        const duplicateSlot = schedules.some(
             (schedule, index) =>
                 index !== editIndex && schedule.slotNumber === newSchedule.slotNumber
         );
@@ -341,12 +340,26 @@ const ControlsContent = ({ app }) => {
                 const [hours, minutes] = newSchedule.time.split(':').map(Number);
 
                 // Combine current date with selected time
-                const scheduledDateTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+                let scheduledDateTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+
+                // If the scheduled time is in the past today, set it for tomorrow
+                if (scheduledDateTime < now) {
+                    scheduledDateTime.setDate(scheduledDateTime.getDate() + 1);
+                }
+
                 const scheduledTimestamp = Timestamp.fromDate(scheduledDateTime); // Convert to Timestamp
+
+                let oldMedicineName = "";
+                let oldMedicineDose = "";
+                let oldMedicineTime = "";
 
                 if (editIndex !== null) {
                     const scheduleIdToUpdate = schedules[editIndex].id;
                     const scheduleDocRef = doc(scheduleCollectionRef, scheduleIdToUpdate);
+                    oldMedicineName = schedules[editIndex].medicineName; //store old name
+                    oldMedicineDose = schedules[editIndex].medicineDose;
+                    oldMedicineTime = schedules[editIndex].time;
+
                     await setDoc(scheduleDocRef, {
                         medicineName: newSchedule.medicineName,
                         medicineDose: newSchedule.medicineDose,
@@ -357,27 +370,22 @@ const ControlsContent = ({ app }) => {
                         slotNumber: newSchedule.slotNumber, // Store slotNumber
                     });
 
-                    // Delete old history entry and add new one
+                    // Update history entries with the same medicine name
                     const historyQuery = query(
                         historyCollectionRef,
-                        where("medicineName", "==", schedules[editIndex].medicineName),
-                        where("dose", "==", schedules[editIndex].medicineDose),
-                        where("scheduledTime", "==", schedules[editIndex].time)
+                        where("medicineName", "==", oldMedicineName)
                     );
                     const historyDocs = await getDocs(historyQuery);
-
                     const batch = writeBatch(firestoreDb);
-                    for (const hDoc of historyDocs.docs) {
-                        batch.delete(doc(historyCollectionRef, hDoc.id));
-                    }
 
-                    // Add new history entry with "Scheduled" status
-                    batch.set(doc(historyCollectionRef), {
-                        medicineName: newSchedule.medicineName,
-                        dose: newSchedule.medicineDose,
-                        scheduledTime: newSchedule.time,
-                        time: scheduledTimestamp, // Store as Timestamp
-                        status: "Scheduled",
+                    historyDocs.forEach(hDoc => {
+                        batch.set(doc(historyCollectionRef, hDoc.id), {
+                            medicineName: newSchedule.medicineName,
+                            dose: newSchedule.medicineDose,
+                            scheduledTime: newSchedule.time,
+                            time: scheduledTimestamp,
+                            status: "Scheduled"
+                        }, { merge: true });
                     });
                     await batch.commit();
 
@@ -415,6 +423,18 @@ const ControlsContent = ({ app }) => {
                     // Update available slots
                     setAvailableSlots(prevSlots => prevSlots.filter(slot => slot !== newSchedule.slotNumber));
                 }
+                // Update stock name if medicine name is edited
+                if (editIndex !== null && oldMedicineName !== newSchedule.medicineName) {
+                    const stocksRef = ref(realtimeDb, `stocks/${userUid}`);
+                    const stockSnapshot = await getDocs(collection(firestoreDb, "medicines", userUid, "schedules"));
+                    const currentStocks = { ...stockLevels };
+                    if (currentStocks[oldMedicineName] !== undefined) {
+                        currentStocks[newSchedule.medicineName] = currentStocks[oldMedicineName];
+                        delete currentStocks[oldMedicineName];
+                        await updateRealtimeData(`stocks/${userUid}`, currentStocks);
+                        setStockLevels(currentStocks)
+                    }
+                }
 
                 setNewSchedule({ medicineName: "", medicineDose: "", time: "", intervalType: "once", intervalValue: '', date: null, slotNumber: null });
                 setOpenScheduleDialog(false);
@@ -445,9 +465,7 @@ const ControlsContent = ({ app }) => {
 
                 // Delete related history entries
                 const historyQuery = query(historyCollectionRef,
-                    where("medicineName", "==", deletedMedicineName),
-                    where("dose", "==", deletedMedicineDose),
-                    where("scheduledTime", "==", deletedMedicineTime)
+                    where("medicineName", "==", deletedMedicineName)
                 );
                 const historyDocs = await getDocs(historyQuery);
                 const batch = writeBatch(firestoreDb);
@@ -694,7 +712,7 @@ const ControlsContent = ({ app }) => {
                         label="Medicine Dose"
                         value={newSchedule.medicineDose}
                         onChange={(e) => setNewSchedule({ ...newSchedule, medicineDose: e.target.value })}
-sx={{ mt: 2 }}
+                        sx={{ mt: 2 }}
                         error={!!inputErrors.medicineDose}
                         helperText={inputErrors.medicineDose}
                     />
@@ -806,3 +824,4 @@ sx={{ mt: 2 }}
 };
 
 export default ControlsContent;
+
