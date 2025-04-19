@@ -17,7 +17,7 @@ import useAuth from "../hooks/useAuth";
 import { useNavigate } from "react-router-dom"; // For redirecting after login
 
 const Login = () => {
-  const { login, loginWithGoogle } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate(); // Hook to navigate between routes
 
   const [email, setEmail] = useState("");
@@ -43,16 +43,6 @@ const Login = () => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setError(""); // Clear previous errors
-    try {
-      await loginWithGoogle();
-      navigate("/home"); // Redirect to homepage after successful login
-    } catch (error) {
-      console.log("Google Login Error:", error.message);
-      setError("Google sign-in failed. Please try again.");
-    }
-  };
 
   return (
     <Container maxWidth="xs">
@@ -112,16 +102,6 @@ const Login = () => {
             onClick={handleLogin}
           >
             Sign In
-          </Button>
-
-          <Button
-            fullWidth
-            variant="outlined"
-            startIcon={<GoogleIcon />}
-            sx={{ mb: 2 }}
-            onClick={handleGoogleLogin}
-          >
-            Sign in with Google
           </Button>
 
           <Typography variant="body2">
