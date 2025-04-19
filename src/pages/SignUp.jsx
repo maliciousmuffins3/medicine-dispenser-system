@@ -5,26 +5,28 @@ import {
   IconButton,
   InputAdornment,
   Typography,
-  Box,
   Container,
   Card,
   CardContent,
   Alert,
 } from "@mui/material";
 import { Visibility, VisibilityOff } from "@mui/icons-material";
-import GoogleIcon from "@mui/icons-material/Google";
-import useAuth from "../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
+import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, doc, setDoc } from 'firebase/firestore';
+import { app } from '../firebase/firebaseConfig'; // Import your Firebase configuration
 
 const SignUp = () => {
-  const { signUp, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  const auth = getAuth(app);
+  const firestore = getFirestore(app);
 
   const handleTogglePassword = () => {
     setShowPassword(!showPassword);
@@ -33,32 +35,36 @@ const SignUp = () => {
   const handleSignUp = async (e) => {
     e.preventDefault();
     setError("");
+    setLoading(true); // Start loading
 
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
+      setLoading(false);
       return;
     }
 
     try {
-      await signUp(email, password);
+      // Create user with email and password
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // Store additional user data in Firestore
+      const userDocRef = doc(firestore, "users", user.uid);
+      await setDoc(userDocRef, {
+        email: email,
+        // Add any other user data you want to store here
+      });
+
       console.log("User signed up successfully!");
       navigate("/home"); // Redirect after successful sign-up
     } catch (err) {
-      console.log("Sign Up Error:", err.message);
+      console.error("Sign Up Error:", err.message);
       setError("Failed to create an account. Please try again.");
+    } finally {
+      setLoading(false); // Stop loading
     }
   };
 
-  const handleGoogleSignUp = async () => {
-    setError("");
-    try {
-      await loginWithGoogle();
-      navigate("/home"); // Redirect after Google sign-up
-    } catch (error) {
-      console.log("Google Sign-Up Error:", error.message);
-      setError("Google sign-up failed. Please try again.");
-    }
-  };
 
   return (
     <Container maxWidth="xs">
@@ -123,18 +129,9 @@ const SignUp = () => {
             color="success"
             sx={{ mt: 2, mb: 2 }}
             onClick={handleSignUp}
+            disabled={loading} // Disable button while loading
           >
-            Sign Up
-          </Button>
-
-          <Button
-            fullWidth
-            variant="outlined"
-            startIcon={<GoogleIcon />}
-            sx={{ mb: 2 }}
-            onClick={handleGoogleSignUp}
-          >
-            Sign up with Google
+            {loading ? 'Signing Up...' : 'Sign Up'}
           </Button>
 
           <Typography variant="body2">
