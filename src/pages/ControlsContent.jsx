@@ -106,7 +106,7 @@ const ControlsContent = ({ app }) => {
   }, []);
 
   function serverRequest() {
-    fetch("http://localhost:3000/get-schedule?UID=hHCTaWargWP44dx7hLyjqO24AYi2")
+    fetch("https://medicine-dispenser-server.onrender.com/get-schedule?UID=hHCTaWargWP44dx7hLyjqO24AYi2")
       .then((response) => {
         if (!response.ok) {
           throw new Error(
