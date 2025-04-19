@@ -105,8 +105,9 @@ const ControlsContent = ({ app }) => {
     cleanupRefs.current = [];
   }, []);
 
+  const userAccount = auth.currentUser;
   function serverRequest() {
-    fetch("https://medicine-dispenser-server.onrender.com/get-schedule?UID=hHCTaWargWP44dx7hLyjqO24AYi2")
+    fetch("https://medicine-dispenser-server.onrender.com/get-schedule?UID=" + userAccount.uid)
       .then((response) => {
         if (!response.ok) {
           throw new Error(
@@ -599,12 +600,11 @@ const ControlsContent = ({ app }) => {
         setAvailableSlots((prevSlots) =>
           [...prevSlots, deletedSlotNumber].sort((a, b) => a - b)
         );
-
-        serverRequest();
       } catch (error) {
         console.error("Error deleting schedule:", error);
       }
     }
+    serverRequest();
   };
 
   const handleNotifyCaregiverChange = async () => {
